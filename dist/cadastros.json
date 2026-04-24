@@ -1,0 +1,27 @@
+{
+  "descricao": "Arquivo de cadastros de consorciadas",
+  "consorciadas": [
+    {
+      "nome": "Exemplo 1 - 50%",
+      "nome_consortio": "Consórcio Exemplo 1",
+      "codigo_consortio": "consorcio_001",
+      "codigo_obra_consortio": "obra_001",
+      "percentual": 50.0,
+      "codigo_empresa": 97,
+      "codigo_obra": 972,
+      "conta_arredondamento": "1.1.01.01.000099",
+      "memorizar_conta": false
+    },
+    {
+      "nome": "Exemplo 2 - 52.5%",
+      "nome_consortio": "Consórcio Exemplo 1",
+      "codigo_consortio": "consorcio_001",
+      "codigo_obra_consortio": "obra_001",
+      "percentual": 52.5,
+      "codigo_empresa": 98,
+      "codigo_obra": 973,
+      "conta_arredondamento": "1.1.01.01.000099",
+      "memorizar_conta": false
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "descricao": "Arquivo de configuração de cadastros de consorciadas",
+  "versao": "1.0",
+  "data_criacao": "2026-02-09",
+  "consorciadas": [
+    {
+      "nome": "Atid Urbanismo - SCP Jardim Scala",
+      "nome_consortio": "Consórcio jardim Scala",
+      "codigo_consortio": "30",
+      "codigo_obra_consortio": "301",
+      "percentual": 52.5,
+      "codigo_empresa": 97,
+      "codigo_obra": 972,
+      "conta_repasse_ativo": "1.1.02.02.000002",
+      "conta_repasse_passivo": "2.3.05.04.000002",
+      "grupo_excluido": "2.3.05.04",
+      "conta_arredondamento": "1.1.01.01.000001",
+      "memorizar_conta": true
+    },
+    {
+      "nome": "Miranda Campos Loteamento SPE",
+      "nome_consortio": "Consórcio Petra",
+      "codigo_consortio": "117",
+      "codigo_obra_consortio": "1171",
+      "percentual": 38.89,
+      "codigo_empresa": 119,
+      "codigo_obra": 1192,
+      "conta_repasse_ativo": "1.1.02.02.000002",
+      "conta_repasse_passivo": "2.3.05.04.000006",
+      "grupo_excluido": "2.3.05.04",
+      "conta_arredondamento": "3.4.01.04.000001",
+      "memorizar_conta": true
+    },
+    {
+      "nome": "NB Participações Ltda",
+      "nome_consortio": "Consórcio Petra",
+      "codigo_consortio": "117",
+      "codigo_obra_consortio": "1171",
+      "percentual": 61.11,
+      "codigo_empresa": 4,
+      "codigo_obra": 41,
+      "conta_repasse_ativo": "1.1.02.02.000002",
+      "conta_repasse_passivo": "2.3.05.04.000005",
+      "grupo_excluido": "2.3.05.04",
+      "conta_arredondamento": "3.4.01.04.000001",
+      "memorizar_conta": true
+    }
+  ],
+  "notas": {
+    "estrutura": "Cada cadastro contém: nome (único), percentual (0-100), código_empresa (inteiro), código_obra (inteiro)",
+    "como_usar": "1. Selecione um cadastro na GUI (app_novo.py)",
+    "adicionar": "2. Pressione 'Novo' para criar novo cadastro",
+    "editar": "3. Ou pressione 'Editar' para modificar um existente",
+    "deletar": "4. Use 'Deletar' para remover um cadastro",
+    "dica": "Os valores percentuais devem corresponder à participação da empresa no consórcio matriz"
+  }
+}
