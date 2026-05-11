@@ -1,7 +1,6 @@
 {
-  "descricao": "Arquivo de configuração de cadastros de consorciadas (amostra anonimizada)",
+  "descricao": "Arquivo de exemplo para cadastros de consorciadas",
   "versao": "1.1",
-  "data_criacao": "2026-04-28",
   "consorciadas": [
     {
       "nome": "Empresa Exemplo Alpha SPE",
@@ -31,13 +30,5 @@
       "conta_arredondamento": "3.4.01.04.000001",
       "memorizar_conta": true
     }
-  ],
-  "notas": {
-    "estrutura": "Cada cadastro contém: nome (único), percentual (0-100), código_empresa (inteiro), código_obra (inteiro)",
-    "como_usar": "1. Selecione um cadastro na GUI (app_novo.py)",
-    "adicionar": "2. Pressione 'Novo' para criar novo cadastro",
-    "editar": "3. Ou pressione 'Editar' para modificar um existente",
-    "deletar": "4. Use 'Deletar' para remover um cadastro",
-    "dica": "Para ambiente local, prefira usar cadastros.local.json com dados próprios (fora do versionamento)"
-  }
+  ]
 }

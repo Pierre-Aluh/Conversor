@@ -1,4 +1,4 @@
-pandas>=3.0.0
-openpyxl>=3.1.0
-Pillow>=11.0.0
-pyinstaller>=6.20.0
+# Faixas conservadoras para compatibilidade em ambiente corporativo comum.
+pandas>=2.2,<3.0
+openpyxl>=3.1,<4.0
+Pillow>=10.3,<12.0

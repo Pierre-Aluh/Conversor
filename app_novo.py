@@ -28,16 +28,16 @@ USO:
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import json
 from pathlib import Path
-from Conversor import gerar_contabilidade_consorciada, processar_pasta_entrada
 import threading
 import os
 import sys
-import io
-import shutil
-from contextlib import redirect_stdout
 from PIL import Image, ImageTk
+
+from camadas.persistencia import CadastrosRepository
+from camadas.servico import ConversorAppService
+from erros import CadastroErro, ConfiguracaoErro, ConversaoErro, PersistenciaErro
+from observabilidade import get_logger, log_event
 
 
 def get_runtime_base_dir():
@@ -58,6 +58,20 @@ def get_resource_path(*parts):
     """Monta o caminho de um recurso do app."""
     return get_bundle_base_dir().joinpath(*parts)
 
+
+def resolve_cadastros_file() -> Path:
+    """Resolve o arquivo de cadastros priorizando configuração local."""
+    override = os.environ.get("CONVERSOR_CADASTROS_FILE")
+    if override:
+        return Path(override).expanduser()
+
+    base_dir = get_runtime_base_dir()
+    local_file = base_dir / "cadastros.local.json"
+    if local_file.exists():
+        return local_file
+
+    return base_dir / "cadastros.json"
+
 class TelaConversor:
     def __init__(self, root):
         self.root = root
@@ -67,7 +81,10 @@ class TelaConversor:
         
         # Cache de arquivo de cadastros
         self.base_dir = get_runtime_base_dir()
-        self.cadastros_file = self.base_dir / "cadastros.json"
+        self.cadastros_file = resolve_cadastros_file()
+        self.repository = CadastrosRepository(self.cadastros_file)
+        self.service = ConversorAppService(self.repository)
+        self.logger = get_logger(__name__)
         self.log_text = None
         self._ensure_app_dirs()
         self._ensure_cadastros_file()
@@ -182,12 +199,8 @@ class TelaConversor:
 
     def _ensure_cadastros_file(self):
         """Garante um arquivo de cadastros persistente ao lado do executável."""
-        if self.cadastros_file.exists():
-            return
-
         bundled_file = get_resource_path("cadastros.json")
-        if bundled_file.exists() and bundled_file != self.cadastros_file:
-            shutil.copy2(bundled_file, self.cadastros_file)
+        self.repository.ensure_file_exists(bundled_file)
 
     def _ensure_app_dirs(self):
         """Garante que pastas essenciais existam"""
@@ -338,18 +351,12 @@ class TelaConversor:
     def _load_cadastros(self):
         """Carrega lista de cadastros do JSON"""
         try:
-            if self.cadastros_file.exists():
-                with open(self.cadastros_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    consorciadas = data.get("consorciadas", [])
-                    nomes = [c["nome"] for c in consorciadas]
-                    self.combo_cadastros['values'] = nomes
-                    self._log(f"✓ {len(nomes)} cadastros carregados")
-            else:
-                self._log("⚠ Arquivo cadastros.json não encontrado. Criar novo.")
-                self._criar_cadastros_padrao()
-        except Exception as e:
+            nomes = self.service.carregar_nomes_cadastros()
+            self.combo_cadastros['values'] = nomes
+            self._log(f"✓ {len(nomes)} cadastros carregados")
+        except CadastroErro as e:
             self._log(f"✗ Erro ao carregar cadastros: {e}")
+            log_event(self.logger, 40, "ui_cadastros_carregar_falhou", etapa="ui")
     
     def _mostrar_boas_vindas(self):
         """Exibe mensagem de boas-vindas no log"""
@@ -377,53 +384,51 @@ class TelaConversor:
     def _on_cadastro_selected(self, event=None):
         """Carrega TODOS os dados do cadastro selecionado"""
         try:
-            with open(self.cadastros_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                consorciadas = data.get("consorciadas", [])
-                
-                selecionado = self.cadastro_var.get()
-                for c in consorciadas:
-                    if c["nome"] == selecionado:
-                        # Carregar TODOS os campos
-                        self.percentual_var.set(c.get("percentual", 50.0))
-                        self.empresa_var.set(c.get("codigo_empresa", "97"))
-                        self.obra_var.set(c.get("codigo_obra", "972"))
-                        
-                        # Conta de arredondamento - SEMPRE carregar se existir no cadastro
-                        conta = c.get("conta_arredondamento", "1.1.01.01.000099")
-                        self.conta_arred_var.set(conta)
-                        
-                        # Checkbox memorizar - FORÇAR update do valor
-                        memorizar = c.get("memorizar_conta", False)
-                        self.memorizar_conta_var.set(memorizar)
-                        
-                        # Contas de Repasse - SEMPRE carregar se existirem no cadastro
-                        repasse_ativo = c.get("conta_repasse_ativo", "")
-                        repasse_passivo = c.get("conta_repasse_passivo", "")
-                        grupo_excluido = c.get("grupo_excluido", "")
-                        
-                        self.conta_repasse_ativo_var.set(repasse_ativo)
-                        self.conta_repasse_passivo_var.set(repasse_passivo)
-                        self.grupo_excluido_var.set(grupo_excluido)
-                        
-                        # Log detalhado
-                        self._log(f"✓ Cadastro '{selecionado}' carregado")
-                        self._log(f"  Percentual: {c.get('percentual')}% | Empresa: {c.get('codigo_empresa')} | Obra: {c.get('codigo_obra')}")
-                        if memorizar:
-                            self._log(f"  Conta Arredondamento: {conta} (MEMORIZADA)")
-                        else:
-                            self._log(f"  Conta Arredondamento: {conta}")
-                        if repasse_ativo or repasse_passivo or grupo_excluido:
-                            self._log(f"  Contas de Repasse:")
-                            if repasse_ativo:
-                                self._log(f"    └─ Ativo: {repasse_ativo}")
-                            if repasse_passivo:
-                                self._log(f"    └─ Passivo: {repasse_passivo}")
-                            if grupo_excluido:
-                                self._log(f"    └─ Grupo Excluído: {grupo_excluido}")
-                        return
-        except Exception as e:
+            selecionado = self.cadastro_var.get()
+            c = self.service.obter_cadastro(selecionado)
+            if not c:
+                return
+
+            # Carregar TODOS os campos
+            self.percentual_var.set(c.get("percentual", 50.0))
+            self.empresa_var.set(c.get("codigo_empresa", "97"))
+            self.obra_var.set(c.get("codigo_obra", "972"))
+
+            # Conta de arredondamento - SEMPRE carregar se existir no cadastro
+            conta = c.get("conta_arredondamento", "1.1.01.01.000099")
+            self.conta_arred_var.set(conta)
+
+            # Checkbox memorizar - FORÇAR update do valor
+            memorizar = c.get("memorizar_conta", False)
+            self.memorizar_conta_var.set(memorizar)
+
+            # Contas de Repasse - SEMPRE carregar se existirem no cadastro
+            repasse_ativo = c.get("conta_repasse_ativo", "")
+            repasse_passivo = c.get("conta_repasse_passivo", "")
+            grupo_excluido = c.get("grupo_excluido", "")
+
+            self.conta_repasse_ativo_var.set(repasse_ativo)
+            self.conta_repasse_passivo_var.set(repasse_passivo)
+            self.grupo_excluido_var.set(grupo_excluido)
+
+            # Log detalhado
+            self._log(f"✓ Cadastro '{selecionado}' carregado")
+            self._log(f"  Percentual: {c.get('percentual')}% | Empresa: {c.get('codigo_empresa')} | Obra: {c.get('codigo_obra')}")
+            if memorizar:
+                self._log(f"  Conta Arredondamento: {conta} (MEMORIZADA)")
+            else:
+                self._log(f"  Conta Arredondamento: {conta}")
+            if repasse_ativo or repasse_passivo or grupo_excluido:
+                self._log(f"  Contas de Repasse:")
+                if repasse_ativo:
+                    self._log(f"    └─ Ativo: {repasse_ativo}")
+                if repasse_passivo:
+                    self._log(f"    └─ Passivo: {repasse_passivo}")
+                if grupo_excluido:
+                    self._log(f"    └─ Grupo Excluído: {grupo_excluido}")
+        except CadastroErro as e:
             self._log(f"✗ Erro ao carregar cadastro: {e}")
+            log_event(self.logger, 40, "ui_cadastro_selecao_falhou", etapa="ui", cadastro=self.cadastro_var.get().strip())
     
     def _new_cadastro(self):
         """Cria novo cadastro"""
@@ -463,8 +468,10 @@ class TelaConversor:
         
         # Scroll com mouse
         def _on_mousewheel_dialog(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel_dialog)
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<MouseWheel>", _on_mousewheel_dialog)
         
         # Seção: Identificação do Consórcio
         frame_consortio = ttk.LabelFrame(scrollable_frame, text="🏢 Identificação do Consórcio", padding=15)
@@ -547,63 +554,30 @@ class TelaConversor:
         
         def save_cadastro():
             try:
-                nome_cons = entry_nome_cons.get().strip()
-                if not nome_cons:
-                    messagebox.showwarning("Validação", "Nome do consórcio não pode estar vazio")
-                    return
-                
-                cod_cons = entry_cons.get().strip()
-                if not cod_cons:
-                    messagebox.showwarning("Validação", "Código do consórcio não pode estar vazio")
-                    return
-                
-                cod_obra_cons = entry_obra_cons.get().strip()
-                if not cod_obra_cons:
-                    messagebox.showwarning("Validação", "Código da obra do consórcio não pode estar vazio")
-                    return
-                
-                nome = entry_nome.get().strip()
-                if not nome:
-                    messagebox.showwarning("Validação", "Nome da consorciada não pode estar vazio")
-                    return
-                
-                conta = entry_conta.get().strip()
-                if not conta:
-                    messagebox.showwarning("Validação", "Conta de arredondamento não pode estar vazia")
-                    return
-                
-                with open(self.cadastros_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                # Verificar se já existe
-                if any(c["nome"] == nome for c in data["consorciadas"]):
-                    messagebox.showwarning("Duplicado", f"Cadastro '{nome}' já existe")
-                    return
-                
-                novo = {
-                    "nome": nome,
-                    "nome_consortio": nome_cons,
-                    "codigo_consortio": cod_cons,
-                    "codigo_obra_consortio": cod_obra_cons,
-                    "percentual": float(entry_perc.get()),
-                    "codigo_empresa": int(entry_emp.get()),
-                    "codigo_obra": int(entry_obra.get()),
+                payload = {
+                    "nome": entry_nome.get().strip(),
+                    "nome_consortio": entry_nome_cons.get().strip(),
+                    "codigo_consortio": entry_cons.get().strip(),
+                    "codigo_obra_consortio": entry_obra_cons.get().strip(),
+                    "percentual": entry_perc.get(),
+                    "codigo_empresa": entry_emp.get(),
+                    "codigo_obra": entry_obra.get(),
                     "conta_repasse_ativo": entry_conta_repasse_ativo.get().strip(),
                     "conta_repasse_passivo": entry_conta_repasse_passivo.get().strip(),
                     "grupo_excluido": entry_grupo_excluido.get().strip(),
-                    "conta_arredondamento": conta,
-                    "memorizar_conta": memorizar_var.get()
+                    "conta_arredondamento": entry_conta.get().strip(),
+                    "memorizar_conta": memorizar_var.get(),
                 }
-                data["consorciadas"].append(novo)
-                
-                with open(self.cadastros_file, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-                
-                self._log(f"✓ Cadastro '{nome}' ({nome_cons}) criado com sucesso")
+
+                self.service.criar_cadastro(payload)
+
+                self._log(f"✓ Cadastro '{payload['nome']}' ({payload['nome_consortio']}) criado com sucesso")
                 self._load_cadastros()
                 foi_salvo[0] = True
                 dialog.destroy()
-            except Exception as e:
+            except ValueError as e:
+                messagebox.showwarning("Validação", str(e))
+            except CadastroErro as e:
                 messagebox.showerror("Erro", f"Erro ao salvar: {e}")
         
         ttk.Button(frame_botoes, text="Salvar", command=save_cadastro).pack(side="right", padx=5)
@@ -617,10 +591,7 @@ class TelaConversor:
             return
         
         try:
-            with open(self.cadastros_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            cadastro = next((c for c in data["consorciadas"] if c["nome"] == selecionado), None)
+            cadastro = self.service.obter_cadastro(selecionado)
             if not cadastro:
                 return
             
@@ -648,8 +619,10 @@ class TelaConversor:
             
             # Scroll com mouse
             def _on_mousewheel_edit(event):
-                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-            canvas.bind_all("<MouseWheel>", _on_mousewheel_edit)
+                if canvas.winfo_exists():
+                    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+            canvas.bind("<MouseWheel>", _on_mousewheel_edit)
             
             # Seção: Identificação do Consórcio
             frame_consortio = ttk.LabelFrame(scrollable_frame, text="🏢 Identificação do Consórcio", padding=15)
@@ -737,30 +710,33 @@ class TelaConversor:
             
             def save_changes():
                 try:
-                    cadastro["nome_consortio"] = entry_nome_cons.get().strip()
-                    cadastro["codigo_consortio"] = entry_cons.get().strip()
-                    cadastro["codigo_obra_consortio"] = entry_obra_cons.get().strip()
-                    cadastro["percentual"] = float(entry_perc.get())
-                    cadastro["codigo_empresa"] = int(entry_emp.get())
-                    cadastro["codigo_obra"] = int(entry_obra.get())
-                    cadastro["conta_repasse_ativo"] = entry_conta_repasse_ativo.get().strip()
-                    cadastro["conta_repasse_passivo"] = entry_conta_repasse_passivo.get().strip()
-                    cadastro["grupo_excluido"] = entry_grupo_excluido.get().strip()
-                    cadastro["conta_arredondamento"] = entry_conta.get().strip()
-                    cadastro["memorizar_conta"] = memorizar_var.get()
-                    
-                    with open(self.cadastros_file, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    updates = {
+                        "nome_consortio": entry_nome_cons.get().strip(),
+                        "codigo_consortio": entry_cons.get().strip(),
+                        "codigo_obra_consortio": entry_obra_cons.get().strip(),
+                        "percentual": entry_perc.get(),
+                        "codigo_empresa": entry_emp.get(),
+                        "codigo_obra": entry_obra.get(),
+                        "conta_repasse_ativo": entry_conta_repasse_ativo.get().strip(),
+                        "conta_repasse_passivo": entry_conta_repasse_passivo.get().strip(),
+                        "grupo_excluido": entry_grupo_excluido.get().strip(),
+                        "conta_arredondamento": entry_conta.get().strip(),
+                        "memorizar_conta": memorizar_var.get(),
+                    }
+
+                    self.service.atualizar_cadastro(selecionado, updates)
                     
                     self._log(f"✓ Cadastro '{selecionado}' atualizado")
                     self._load_cadastros()
                     dialog.destroy()
-                except Exception as e:
+                except ValueError as e:
+                    messagebox.showwarning("Validação", str(e))
+                except CadastroErro as e:
                     messagebox.showerror("Erro", f"Erro ao salvar: {e}")
             
             ttk.Button(frame_botoes, text="Salvar", command=save_changes).pack(side="right", padx=5)
             ttk.Button(frame_botoes, text="Cancelar", command=dialog.destroy).pack(side="right", padx=5)
-        except Exception as e:
+        except CadastroErro as e:
             messagebox.showerror("Erro", f"Erro ao editar: {e}")
     
     def _delete_cadastro(self):
@@ -772,18 +748,15 @@ class TelaConversor:
         
         if messagebox.askyesno("Confirmação", f"Deletar cadastro '{selecionado}'?"):
             try:
-                with open(self.cadastros_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                data["consorciadas"] = [c for c in data["consorciadas"] if c["nome"] != selecionado]
-                
-                with open(self.cadastros_file, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
+                removido = self.service.deletar_cadastro(selecionado)
+                if not removido:
+                    messagebox.showwarning("Seleção", f"Cadastro '{selecionado}' não encontrado")
+                    return
                 
                 self._log(f"✓ Cadastro '{selecionado}' deletado")
                 self._load_cadastros()
                 self.cadastro_var.set("")
-            except Exception as e:
+            except CadastroErro as e:
                 messagebox.showerror("Erro", f"Erro ao deletar: {e}")
     
     def _converter(self):
@@ -794,29 +767,15 @@ class TelaConversor:
             return
         
         conta_arred = self.conta_arred_var.get().strip()
-        if not conta_arred:
-            messagebox.showerror("Erro", "Informe a conta de arredondamento")
-            return
-        
         try:
-            perc_str = self.percentual_var.get().strip()
-            percentual = float(perc_str) / 100
-        except ValueError:
-            messagebox.showerror("Erro", f"Percentual inválido: '{self.percentual_var.get()}' (usar apenas números, ex: 52.5)")
-            return
-        
-        try:
-            emp_str = self.empresa_var.get().strip()
-            empresa = int(emp_str)
-        except ValueError:
-            messagebox.showerror("Erro", f"Código Empresa inválido: '{self.empresa_var.get()}' (usar apenas números inteiros)")
-            return
-        
-        try:
-            obra_str = self.obra_var.get().strip()
-            obra = int(obra_str)
-        except ValueError:
-            messagebox.showerror("Erro", f"Código Obra inválido: '{self.obra_var.get()}' (usar apenas números inteiros)")
+            percentual, empresa, obra, conta_arred = self.service.parse_config(
+                self.percentual_var.get(),
+                self.empresa_var.get(),
+                self.obra_var.get(),
+                conta_arred,
+            )
+        except ConfiguracaoErro as e:
+            messagebox.showerror("Erro", str(e))
             return
         
         # Executar em thread para não congelar GUI
@@ -855,23 +814,25 @@ class TelaConversor:
                 self._log(f"  → Lançamentos do grupo serão excluídos")
                 self._log(f"  → EXCETO repasse passivo → será reclassificado para ativo (100%)\n")
             
-            # Capturar stdout para detectar avisos e redirecionar para log
-            console_output = io.StringIO()
-            with redirect_stdout(console_output):
-                resultado = gerar_contabilidade_consorciada(
-                    arquivo, percentual, empresa, obra, conta_arred,
-                    repasse_ativo, repasse_passivo, grupo_excluido
-                )
-            
-            # Processar output capturado
-            captured_text = console_output.getvalue()
+            conversao = self.service.executar_conversao(
+                arquivo,
+                percentual,
+                empresa,
+                obra,
+                conta_arred,
+                repasse_ativo,
+                repasse_passivo,
+                grupo_excluido,
+            )
+            resultado = conversao["resultado"]
+            captured_text = conversao["log_capturado"]
             if captured_text:
                 # Enviar todo output para o log
                 for line in captured_text.strip().split('\n'):
                     self._log(line)
             
             # Detectar se há aviso de grupo não encontrado
-            tem_aviso_grupo = "Grupo para exclusão não encontrado" in captured_text
+            tem_aviso_grupo = conversao["tem_aviso_grupo"]
             
             # Salvar arquivo de saída
             saida_dir = self.base_dir / "saida"
@@ -915,10 +876,11 @@ class TelaConversor:
             self._log(f"\n✗ ARQUIVO NÃO ENCONTRADO: {e}")
             self.status_var.set(f"✗ Arquivo não encontrado")
             messagebox.showerror("Arquivo Não Encontrado", str(e))
-        except Exception as e:
+        except ConversaoErro as e:
             self._log(f"\n✗ ERRO: {e}")
             self.status_var.set(f"✗ Erro na conversão")
             messagebox.showerror("Erro", f"Erro na conversão:\n{e}")
+            log_event(self.logger, 40, "ui_conversao_falhou", etapa="ui", arquivo=arquivo)
     
     def _salvar_conta_memorizada_se_necessario(self, conta_arred):
         """Salva a conta de arredondamento no cadastro se a flag memorizar estiver marcada"""
@@ -933,57 +895,26 @@ class TelaConversor:
             if not cadastro_selecionado:
                 self._log("  (Nenhum cadastro selecionado para memorizar)")
                 return
-            
-            # Atualizar o cadastro com a conta de arredondamento
-            with open(self.cadastros_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            cadastro_encontrado = False
-            for c in data["consorciadas"]:
-                if c["nome"] == cadastro_selecionado:
-                    c["conta_arredondamento"] = conta_arred
-                    c["memorizar_conta"] = True
-                    cadastro_encontrado = True
-                    break
-            
-            if not cadastro_encontrado:
-                self._log(f"  ⚠ Cadastro '{cadastro_selecionado}' não encontrado")
-                return
-            
-            with open(self.cadastros_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            self.service.memorizar_conta(cadastro_selecionado, conta_arred, True)
             
             self._log(f"✓ Conta de arredondamento '{conta_arred}' MEMORIZADA no cadastro '{cadastro_selecionado}'")
-        except Exception as e:
+        except (CadastroErro, ConfiguracaoErro) as e:
             # Não interromper o processo se houver erro ao salvar
             self._log(f"⚠ Aviso: Não foi possível memorizar a conta: {e}")
     
     def _processar_pasta(self):
         """Processa todos os arquivos da pasta entrada/"""
         conta_arred = self.conta_arred_var.get().strip()
-        if not conta_arred:
-            messagebox.showerror("Erro", "Informe a conta de arredondamento")
-            return
-        
         try:
-            perc_str = self.percentual_var.get().strip()
-            percentual = float(perc_str) / 100
-        except ValueError:
-            messagebox.showerror("Erro", f"Percentual inválido: '{self.percentual_var.get()}' (usar apenas números, ex: 52.5)")
-            return
-        
-        try:
-            emp_str = self.empresa_var.get().strip()
-            empresa = int(emp_str)
-        except ValueError:
-            messagebox.showerror("Erro", f"Código Empresa inválido: '{self.empresa_var.get()}' (usar apenas números inteiros)")
-            return
-        
-        try:
-            obra_str = self.obra_var.get().strip()
-            obra = int(obra_str)
-        except ValueError:
-            messagebox.showerror("Erro", f"Código Obra inválido: '{self.obra_var.get()}' (usar apenas números inteiros)")
+            percentual, empresa, obra, conta_arred = self.service.parse_config(
+                self.percentual_var.get(),
+                self.empresa_var.get(),
+                self.obra_var.get(),
+                conta_arred,
+            )
+        except ConfiguracaoErro as e:
+            messagebox.showerror("Erro", str(e))
             return
         
         thread = threading.Thread(target=self._run_batch_conversion, 
@@ -1007,7 +938,7 @@ class TelaConversor:
             self._log(f"Empresa: {empresa}, Obra: {obra}")
             self._log(f"Conta Arredondamento: {conta_arred}\n")
             
-            processar_pasta_entrada(percentual, empresa, obra, conta_arred, nome_consorciada)
+            self.service.executar_lote(percentual, empresa, obra, conta_arred, nome_consorciada)
             
             self._log("\n✓ Processamento em lote concluído!")
             self.status_var.set("✓ Processamento em lote concluído")
@@ -1021,10 +952,11 @@ class TelaConversor:
             self._log(f"\n✗ ARQUIVO NÃO ENCONTRADO: {e}")
             self.status_var.set("✗ Arquivo não encontrado")
             messagebox.showerror("Arquivo Não Encontrado", str(e))
-        except Exception as e:
+        except ConversaoErro as e:
             self._log(f"\n✗ ERRO: {e}")
             self.status_var.set("✗ Erro no processamento")
             messagebox.showerror("Erro", f"Erro:\n{e}")
+            log_event(self.logger, 40, "ui_lote_falhou", etapa="ui")
     
     def _open_output_dir(self):
         """Abre pasta de saída"""
@@ -1042,45 +974,16 @@ class TelaConversor:
     def _criar_cadastros_padrao(self):
         """Cria arquivo de cadastros padrão"""
         try:
-            cadastros_padrao = {
-                "descricao": "Arquivo de cadastros de consorciadas",
-                "consorciadas": [
-                    {
-                        "nome": "Exemplo 1 - 50%",
-                        "nome_consortio": "Consórcio Exemplo 1",
-                        "codigo_consortio": "consorcio_001",
-                        "codigo_obra_consortio": "obra_001",
-                        "percentual": 50.0,
-                        "codigo_empresa": 97,
-                        "codigo_obra": 972,
-                        "conta_arredondamento": "1.1.01.01.000099",
-                        "memorizar_conta": False
-                    },
-                    {
-                        "nome": "Exemplo 2 - 52.5%",
-                        "nome_consortio": "Consórcio Exemplo 1",
-                        "codigo_consortio": "consorcio_001",
-                        "codigo_obra_consortio": "obra_001",
-                        "percentual": 52.5,
-                        "codigo_empresa": 98,
-                        "codigo_obra": 973,
-                        "conta_arredondamento": "1.1.01.01.000099",
-                        "memorizar_conta": False
-                    }
-                ]
-            }
-            
-            with open(self.cadastros_file, 'w', encoding='utf-8') as f:
-                json.dump(cadastros_padrao, f, indent=2, ensure_ascii=False)
-            
+            self.repository.write_data(self.repository.default_data())
             self._log(f"✓ Arquivo cadastros.json criado com exemplos padrão")
             self._load_cadastros()
-        except Exception as e:
+        except (CadastroErro, PersistenciaErro) as e:
             self._log(f"✗ Erro ao criar cadastros padrão: {e}")
 
 
 def show_splash_screen(root):
     """Exibe splash screen com GIF animado por 2.5 segundos"""
+    logger = get_logger(__name__)
     try:
         # Criar janela splash
         splash = tk.Toplevel()
@@ -1158,14 +1061,16 @@ def show_splash_screen(root):
         splash.lift()
         splash.attributes('-topmost', True)
         
-    except Exception as e:
+    except (tk.TclError, OSError, RuntimeError, ValueError) as e:
         # Se houver qualquer erro, apenas ignora o splash
         print(f"Splash screen error: {e}")
+        log_event(logger, 30, "ui_splash_falhou", etapa="ui")
         if 'splash' in locals():
             splash.destroy()
 
 
 def main():
+    logger = get_logger(__name__)
     root = tk.Tk()
     root.withdraw()  # Ocultar janela principal temporariamente
     
@@ -1174,8 +1079,9 @@ def main():
         icon_path = get_resource_path("icon", "app_icon.ico")
         if icon_path.exists():
             root.iconbitmap(str(icon_path))
-    except Exception as e:
+    except (tk.TclError, OSError) as e:
         print(f"Aviso: Não foi possível carregar ícone: {e}")
+        log_event(logger, 30, "ui_icone_falhou", etapa="ui")
     
     # Mostrar splash screen
     show_splash_screen(root)

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Build e empacotamento
+build/
+build_pyinstaller/
+dist/
+installer/
+release/
+*.spec
+*.spec.tmp
+*.toc
+*.pkg
+*.pyz
+
+# Scripts de build descontinuados
+build_conversor.ps1
+build_installer.ps1
+ConversorContabil.iss
+
+# Artefatos operacionais (runtime)
+entrada/
+saida/
+
+# Dados locais gerados por build/distribuição
+dist/cadastros.json
+cadastros.local.json
+
+# Exceções para exemplos controlados (se houver)
+!entrada/exemplos/
+!entrada/exemplos/**
+!saida/exemplos/
+!saida/exemplos/**
