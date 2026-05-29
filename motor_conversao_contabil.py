@@ -1,5 +1,6 @@
 ﻿import pandas as pd
 from pathlib import Path
+from typing import Callable
 
 from config import CONTAS_PRIORITARIAS
 from conversor._entrada import validar_parametros, carregar_e_normalizar
@@ -12,19 +13,61 @@ from observabilidade import get_logger, log_event
 logger = get_logger(__name__)
 
 
-def gerar_contabilidade_consorciada(arquivo_origem, percentual, cod_empresa, cod_obra, conta_arredondamento=None,
-                                    repasse_ativo=None, repasse_passivo=None, grupo_excluido=None):
+def _emit_progress(progress_callback: Callable[[float, str], None] | None, value: float, message: str) -> None:
+    if not progress_callback:
+        return
+    progress_callback(max(0.0, min(1.0, value)), message)
+
+
+def gerar_contabilidade_consorciada(
+    arquivo_origem,
+    percentual,
+    cod_empresa,
+    cod_obra,
+    conta_arredondamento=None,
+    repasse_ativo=None,
+    repasse_passivo=None,
+    grupo_excluido=None,
+    sheet_name: str = "",
+    progress_callback: Callable[[float, str], None] | None = None,
+):
     """
     Transforma lançamentos do Consórcio para a Empresa Consorciada.
 
     CONTAS PRIORITÁRIAS (SAGRADAS): Devem fechar 100% em todos os níveis.
     conta_arredondamento: Conta usada para lançamentos de ajuste de arredondamento.
     """
+    _emit_progress(progress_callback, 0.03, "Validando parâmetros")
     validar_parametros(arquivo_origem, percentual, cod_empresa, cod_obra, conta_arredondamento)
-    df_original, new_df = carregar_e_normalizar(arquivo_origem, cod_empresa, cod_obra)
+
+    _emit_progress(progress_callback, 0.08, "Carregando e normalizando dados")
+    df_original, new_df = carregar_e_normalizar(
+        arquivo_origem,
+        cod_empresa,
+        cod_obra,
+        sheet_name=sheet_name,
+    )
+
+    _emit_progress(progress_callback, 0.12, "Aplicando exclusão de grupo")
     new_df = aplicar_exclusao_grupo(new_df, repasse_ativo, repasse_passivo, grupo_excluido)
-    new_df = aplicar_passos_1_a_3(new_df, percentual, CONTAS_PRIORITARIAS)
+
+    _emit_progress(progress_callback, 0.14, "Iniciando conversão por linhas")
+
+    def progresso_linhas(valor: float, mensagem: str) -> None:
+        # Faixa principal dedicada ao progresso por linha convertida.
+        _emit_progress(progress_callback, 0.14 + (0.72 * valor), mensagem)
+
+    new_df = aplicar_passos_1_a_3(
+        new_df,
+        percentual,
+        CONTAS_PRIORITARIAS,
+        progress_callback=progresso_linhas,
+    )
+
+    _emit_progress(progress_callback, 0.90, "Validando fechamento e formatando")
     new_df = validar_e_formatar(new_df, df_original, percentual, CONTAS_PRIORITARIAS)
+
+    _emit_progress(progress_callback, 0.97, "Conversão calculada")
     return new_df
 
 
@@ -55,7 +98,14 @@ def gerar_para_multiplas_consorciadas(arquivo_origem, lista_consorciadas):
     return pd.concat(resultados, ignore_index=True)
 
 
-def processar_pasta_entrada(percentual, cod_empresa, cod_obra, conta_arredondamento=None, nome_consorciada=""):
+def processar_pasta_entrada(
+    percentual,
+    cod_empresa,
+    cod_obra,
+    conta_arredondamento=None,
+    nome_consorciada="",
+    progress_callback: Callable[[float, str], None] | None = None,
+):
     base_dir = Path(__file__).resolve().parent
     pasta_entrada = base_dir / 'entrada'
     pasta_saida = base_dir / 'saida'
@@ -64,17 +114,33 @@ def processar_pasta_entrada(percentual, cod_empresa, cod_obra, conta_arredondame
     pasta_saida.mkdir(parents=True, exist_ok=True)
 
     arquivos = [p for p in pasta_entrada.iterdir() if p.is_file()]
+    _emit_progress(progress_callback, 0.05, "Mapeando arquivos da pasta de entrada")
 
     if not arquivos:
         print(f"Nenhum arquivo encontrado em {pasta_entrada}")
         log_event(logger, 30, "lote_sem_arquivos", etapa="lote")
+        _emit_progress(progress_callback, 1.0, "Nenhum arquivo encontrado")
         return
 
-    for arquivo in arquivos:
+    total_arquivos = len(arquivos)
+    for idx, arquivo in enumerate(arquivos, start=1):
+        base = (idx - 1) / total_arquivos
+        faixa = 1 / total_arquivos
+
+        def progresso_arquivo(valor: float, mensagem: str) -> None:
+            percentual_global = base + (max(0.0, min(1.0, valor)) * faixa)
+            _emit_progress(progress_callback, percentual_global, f"[{idx}/{total_arquivos}] {mensagem}")
+
         try:
             resultado = gerar_contabilidade_consorciada(
-                arquivo, percentual, cod_empresa, cod_obra, conta_arredondamento
+                arquivo,
+                percentual,
+                cod_empresa,
+                cod_obra,
+                conta_arredondamento,
+                progress_callback=progresso_arquivo,
             )
+            progresso_arquivo(0.95, "Salvando arquivo de saída")
             if nome_consorciada:
                 saida = pasta_saida / f"{arquivo.stem} - {nome_consorciada} - Arquivo de Saída para Importação no UAU.xlsx"
             else:
@@ -82,9 +148,12 @@ def processar_pasta_entrada(percentual, cod_empresa, cod_obra, conta_arredondame
             resultado.to_excel(saida, index=False)
             print(f"Arquivo gerado: {saida}")
             log_event(logger, 20, "lote_arquivo_processado", etapa="lote", arquivo=arquivo)
+            progresso_arquivo(1.0, f"Concluído: {arquivo.name}")
         except (PermissionError, FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
             log_event(logger, 40, "lote_arquivo_falhou", etapa="lote", arquivo=arquivo)
             print(f"Falha ao processar {arquivo.name}: {exc}")
+
+    _emit_progress(progress_callback, 1.0, "Processamento em lote concluído")
 
 
 # --- EXEMPLO DE USO ---

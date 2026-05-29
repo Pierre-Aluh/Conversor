@@ -29,6 +29,14 @@ Copy-Item cadastros.exemplo.json cadastros.local.json
 
 Edite `cadastros.local.json` com seus dados internos. Esse arquivo e ignorado pelo Git.
 
+Nas instalacoes empacotadas, os cadastros persistem em uma pasta estavel do usuario:
+
+```text
+%LOCALAPPDATA%\Conversor Contabil\Data\cadastros.local.json
+```
+
+Ao atualizar a aplicacao, o conversor tenta migrar automaticamente cadastros antigos que ainda estejam ao lado do executavel.
+
 Opcionalmente, use um caminho customizado:
 
 ```powershell
@@ -40,14 +48,30 @@ $env:CONVERSOR_CADASTROS_FILE = "C:\\caminho\\seguro\\cadastros.local.json"
 ### Interface grafica
 
 ```powershell
-python app_novo.py
+python interface_desktop.py
 ```
 
 ### Conversao por script
 
 ```powershell
-python Conversor.py
+python motor_conversao_contabil.py
 ```
+
+## Distribuicao em Um Unico EXE (sem admin)
+
+Para distribuir apenas um arquivo executavel com todas as bibliotecas embutidas:
+
+```powershell
+python -m PyInstaller ConversorContabil.spec --distpath dist --workpath build_dist -y
+```
+
+Arquivo final gerado:
+
+```text
+dist/ConversorContabil.exe
+```
+
+Esse executavel e portatil e nao exige permissao de administrador para executar.
 
 ## Testes e Qualidade
 
@@ -67,8 +91,8 @@ python -m ruff check .
 
 ```
 Conversor/
-├── app_novo.py              # Interface gráfica (Tkinter)
-├── Conversor.py             # Orquestrador do fluxo de conversão
+├── interface_desktop.py     # Interface gráfica (CustomTkinter)
+├── motor_conversao_contabil.py # Orquestrador do fluxo de conversão
 ├── config.py                # Configurações centrais (contas prioritárias)
 ├── erros.py                 # Exceções de domínio
 ├── observabilidade.py       # Logging estruturado
@@ -112,7 +136,8 @@ Para detalhes profundos sobre o algoritmo de conversão contábil, regras de arr
 - Falha por dependencia ausente:
   - Reinstale dependencias com `python -m pip install -r requirements.txt`.
 - Cadastros locais nao carregados:
-  - Confirme se `cadastros.local.json` existe na pasta do app ou se `CONVERSOR_CADASTROS_FILE` aponta para um JSON valido.
+  - Em instalacoes empacotadas, confirme se `%LOCALAPPDATA%\Conversor Contabil\Data\cadastros.local.json` existe ou se `CONVERSOR_CADASTROS_FILE` aponta para um JSON valido.
+  - Em ambiente de desenvolvimento, confirme se `cadastros.local.json` existe na pasta do projeto.
 - Testes falhando localmente:
   - Garanta Python 3.12+ e execute `python -m pytest tests/ -v` para ver o detalhe da falha.
 

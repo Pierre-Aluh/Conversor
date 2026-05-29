@@ -11,7 +11,7 @@ Nenhum arquivo de dominio real e referenciado neste modulo.
 """
 import pytest
 
-from Conversor import gerar_contabilidade_consorciada
+from motor_conversao_contabil import gerar_contabilidade_consorciada
 from config import CONTAS_PRIORITARIAS, TOLERANCIA_CONTAS_PRIORITARIAS
 from tests.conftest import (
     CONTA_ARREDONDAMENTO,

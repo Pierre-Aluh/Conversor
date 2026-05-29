@@ -5,6 +5,7 @@ __pycache__/
 
 # Build e empacotamento
 build/
+build_dist/
 build_pyinstaller/
 dist/
 installer/

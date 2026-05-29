@@ -3,6 +3,13 @@
 
 import pandas as pd
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Callable
+
+
+def _emit_progress(progress_callback: Callable[[float, str], None] | None, value: float, message: str) -> None:
+    if not progress_callback:
+        return
+    progress_callback(max(0.0, min(1.0, value)), message)
 
 
 def _total_esperado_cents(new_df, mask, percentual):
@@ -16,7 +23,12 @@ def _total_esperado_cents(new_df, mask, percentual):
     return int((total_decimal * Decimal('100')).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
 
 
-def aplicar_passos_1_a_3(new_df, percentual, contas_prioritarias):
+def aplicar_passos_1_a_3(
+    new_df,
+    percentual,
+    contas_prioritarias,
+    progress_callback: Callable[[float, str], None] | None = None,
+):
     """
     Executa os passos 1, 1.5, 2, 2.5 e 3 sobre new_df.
     Retorna new_df com VALOR_CENTS ajustado e ACAO_LIMPA ainda presente
@@ -28,12 +40,24 @@ def aplicar_passos_1_a_3(new_df, percentual, contas_prioritarias):
 
     # --- PASSO 1: Aplicar percentual individualmente ---
     print("\n[PASSO 1] Aplicando percentual individualmente...")
-    new_df['VALOR_CENTS'] = (new_df['VALOR_ORIGINAL'] * percentual * 100).round().astype(int)
+    total_linhas = len(new_df)
+    new_df['VALOR_CENTS'] = 0
     mask_preservar_100 = new_df['_preservar_100'] == True
-    if mask_preservar_100.any():
-        new_df.loc[mask_preservar_100, 'VALOR_CENTS'] = (
-            new_df.loc[mask_preservar_100, 'VALOR_ORIGINAL'] * 100
-        ).round().astype(int)
+
+    # Progresso por linha convertida (com throttling para evitar overhead excessivo de UI).
+    update_interval = max(1, total_linhas // 200) if total_linhas > 0 else 1
+    for idx_pos, idx in enumerate(new_df.index, start=1):
+        valor_original = float(new_df.at[idx, 'VALOR_ORIGINAL'])
+        preservar = bool(new_df.at[idx, '_preservar_100'])
+        if preservar:
+            valor_cents = int(round(valor_original * 100))
+        else:
+            valor_cents = int(round(valor_original * percentual * 100))
+        new_df.at[idx, 'VALOR_CENTS'] = valor_cents
+
+        if idx_pos == 1 or idx_pos % update_interval == 0 or idx_pos == total_linhas:
+            _emit_progress(progress_callback, idx_pos / total_linhas, f"Convertendo linhas ({idx_pos}/{total_linhas})")
+
     print(
         f"  [OK] {len(new_df)} lançamentos convertidos "
         f"(com {int(mask_preservar_100.sum())} em valor original)"

@@ -1,0 +1,18 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build: conversor onefile",
+			"type": "shell",
+			"command": "..\\.venv\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"PyInstaller",
+				"--clean",
+				"--noconfirm",
+				"ConversorContabil.spec"
+			],
+			"isBackground": false
+		}
+	]
+}

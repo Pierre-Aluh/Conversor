@@ -49,6 +49,18 @@ class TestPersistenciaCadastros:
         assert removido is True
         assert repo.find_by_name("Novo Cadastro") is None
 
+    def test_repo_migra_arquivo_legado_quando_destino_nao_existe(self, tmp_path):
+        legado = tmp_path / "instalacao_antiga" / "cadastros.local.json"
+        destino = tmp_path / "appdata" / "cadastros.local.json"
+        legado.parent.mkdir(parents=True, exist_ok=True)
+        legado.write_text('{"consorciadas": [{"nome": "Migrado"}]}', encoding="utf-8")
+
+        repo = CadastrosRepository(destino)
+        repo.ensure_file_exists(migration_candidates=[legado])
+
+        assert destino.exists()
+        assert repo.find_by_name("Migrado") == {"nome": "Migrado"}
+
 
 class TestServicoInterface:
     def test_parse_config_valida(self, tmp_path):

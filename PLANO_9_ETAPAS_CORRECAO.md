@@ -82,7 +82,7 @@ Criterio de pronto:
 - pytest executa local e em CI com resultado reproduzivel.
 
 ## Etapa 5 - Desacoplamento Do Nucleo Conversor
-Problema coberto: funcao longa e muito acoplada em Conversor.py.
+Problema coberto: funcao longa e muito acoplada em motor_conversao_contabil.py.
 
 Entregaveis:
 - Extracao para modulos internos (entrada, normalizacao, regras, ajuste, saida).
@@ -96,12 +96,12 @@ Status: concluida.
 
 Registro validado em 2026-04-28:
 - Pacote conversor/ criado com 4 modulos: _entrada.py, _exclusao.py, _ajuste.py, _saida.py.
-- Conversor.py reescrito como orquestrador (73 linhas); assinatura publica de gerar_contabilidade_consorciada mantida.
+- motor_conversao_contabil.py reescrito como orquestrador (73 linhas); assinatura publica de gerar_contabilidade_consorciada mantida.
 - Bug latente corrigido: sequencias_balanceadas_antes e sequencias_alteradas_por_ajuste inicializados como set() em _ajuste.py.
 - Resultado: 9 passed in 0.62s (python -m pytest tests/ -v).
 
 ## Etapa 6 - Modularizacao Da Interface Grafica
-Problema coberto: app_novo.py monolitico.
+Problema coberto: interface_desktop.py monolitico.
 
 Entregaveis:
 - Separacao em camadas: UI, servico de aplicacao e persistencia de cadastros.
@@ -114,7 +114,7 @@ Status: concluida.
 
 Registro validado em 2026-04-28:
 - Camadas criadas: camadas/persistencia.py (CadastrosRepository) e camadas/servico.py (ConversorAppService).
-- app_novo.py adaptado para consumir servico/repository em carga, selecao, criacao, edicao, delecao e memorizacao de cadastros.
+- interface_desktop.py adaptado para consumir servico/repository em carga, selecao, criacao, edicao, delecao e memorizacao de cadastros.
 - Conversao unitária e processamento em lote passaram a ser delegados para a camada de servico, mantendo fluxos da UI.
 - Testes sem Tkinter adicionados: tests/test_servico_interface.py (6 casos).
 - Resultado: 15 passed in 0.77s (python -m pytest tests/ -v).
@@ -135,7 +135,7 @@ Criterio de pronto:
 Registro validado em 2026-04-28:
 - Excecoes de dominio consolidadas em erros.py (ConfiguracaoErro, ConversaoErro, CadastroErro, PersistenciaErro e derivadas), removendo captura generica por Exception nos fluxos principais.
 - Observabilidade estruturada centralizada em observabilidade.py com log_event e sanitizacao de caminho de arquivo para evitar exposicao de path completo.
-- Camadas e UI adaptadas para tratamento contextual (camadas/persistencia.py, camadas/servico.py, app_novo.py, Conversor.py), com mensagens claras ao usuario e rastreio por etapa/evento.
+- Camadas e UI adaptadas para tratamento contextual (camadas/persistencia.py, camadas/servico.py, interface_desktop.py, motor_conversao_contabil.py), com mensagens claras ao usuario e rastreio por etapa/evento.
 - Testes ajustados e ampliados: correção de expectativa para ConfiguracaoErro em tests/test_servico_interface.py e novo teste tests/test_observabilidade.py cobrindo sanitizacao de arquivo.
 - Resultado: 16 passed in 0.64s (python -m pytest tests/ -v).
 
@@ -179,7 +179,7 @@ Criterio de pronto:
 
 Registro validado em 2026-04-28:
 - Dados de cadastro anonimizados em cadastros.json e arquivo de exemplo adicionado em cadastros.exemplo.json.
-- Suporte a configuracao local implementado em app_novo.py com prioridade para cadastros.local.json e override por CONVERSOR_CADASTROS_FILE.
+- Suporte a configuracao local implementado em interface_desktop.py com prioridade para cadastros.local.json e override por CONVERSOR_CADASTROS_FILE.
 - Arquivo local excluido do versionamento em .gitignore (cadastros.local.json).
 - Referencias nominais de dominio substituidas por exemplos anonimizados em test_piso_001.py e ENCICLOPEDIA_CONVERSOR_CONTABIL.md.
 - Politica de dependencias revisada com faixas realistas:

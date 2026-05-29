@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import io
+import inspect
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Callable
 
-from Conversor import gerar_contabilidade_consorciada, processar_pasta_entrada
+from motor_conversao_contabil import gerar_contabilidade_consorciada, processar_pasta_entrada
 from erros import CadastroErro, CadastroNaoEncontradoErro, ConfiguracaoErro, ConversaoErro, PersistenciaErro
 from observabilidade import get_logger, log_event
 
@@ -23,6 +24,19 @@ class ConversorAppService:
         self.conversao_fn = conversao_fn
         self.lote_fn = lote_fn
         self.logger = get_logger(__name__)
+
+    @staticmethod
+    def _aceita_parametro(funcao: Callable[..., Any], parametro: str) -> bool:
+        """Indica se a função aceita o parâmetro nomeado ou kwargs genérico."""
+        try:
+            assinatura = inspect.signature(funcao)
+        except (TypeError, ValueError):
+            return False
+
+        if parametro in assinatura.parameters:
+            return True
+
+        return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in assinatura.parameters.values())
 
     def carregar_nomes_cadastros(self) -> list[str]:
         try:
@@ -167,6 +181,8 @@ class ConversorAppService:
         repasse_ativo: str,
         repasse_passivo: str,
         grupo_excluido: str,
+        sheet_name: str = "",
+        progress_callback: Callable[[float, str], None] | None = None,
     ) -> dict[str, Any]:
         arquivo_path = Path(arquivo)
         if not arquivo_path.exists():
@@ -175,7 +191,7 @@ class ConversorAppService:
         console_output = io.StringIO()
         try:
             with redirect_stdout(console_output):
-                resultado = self.conversao_fn(
+                argumentos = [
                     arquivo,
                     percentual,
                     empresa,
@@ -184,7 +200,14 @@ class ConversorAppService:
                     repasse_ativo,
                     repasse_passivo,
                     grupo_excluido,
-                )
+                ]
+                kwargs: dict[str, Any] = {}
+                if sheet_name and self._aceita_parametro(self.conversao_fn, "sheet_name"):
+                    kwargs["sheet_name"] = sheet_name
+                if progress_callback and self._aceita_parametro(self.conversao_fn, "progress_callback"):
+                    kwargs["progress_callback"] = progress_callback
+
+                resultado = self.conversao_fn(*argumentos, **kwargs)
         except (ValueError, RuntimeError) as exc:
             log_event(self.logger, 40, "conversao_falha_negocio", etapa="conversao", arquivo=arquivo)
             raise ConversaoErro(str(exc)) from exc
@@ -200,9 +223,21 @@ class ConversorAppService:
             "tem_aviso_grupo": "Grupo para exclusão não encontrado" in captured_text,
         }
 
-    def executar_lote(self, percentual: float, empresa: int, obra: int, conta_arred: str, nome_consorciada: str = "") -> None:
+    def executar_lote(
+        self,
+        percentual: float,
+        empresa: int,
+        obra: int,
+        conta_arred: str,
+        nome_consorciada: str = "",
+        progress_callback: Callable[[float, str], None] | None = None,
+    ) -> None:
         try:
-            self.lote_fn(percentual, empresa, obra, conta_arred, nome_consorciada)
+            kwargs: dict[str, Any] = {}
+            if progress_callback and self._aceita_parametro(self.lote_fn, "progress_callback"):
+                kwargs["progress_callback"] = progress_callback
+
+            self.lote_fn(percentual, empresa, obra, conta_arred, nome_consorciada, **kwargs)
             log_event(self.logger, 20, "lote_ok", etapa="lote", cadastro=nome_consorciada or None)
         except (ValueError, RuntimeError) as exc:
             log_event(self.logger, 40, "lote_falha_negocio", etapa="lote", cadastro=nome_consorciada or None)

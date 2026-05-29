@@ -14,8 +14,19 @@ class CadastrosRepository:
         self.cadastros_file = Path(cadastros_file)
         self.logger = get_logger(__name__)
 
-    def ensure_file_exists(self, bundled_file: Path | None = None) -> None:
+    def ensure_file_exists(
+        self,
+        bundled_file: Path | None = None,
+        migration_candidates: list[Path] | None = None,
+    ) -> None:
         if self.cadastros_file.exists():
+            return
+        for candidate in migration_candidates or []:
+            source = Path(candidate)
+            if not source.exists() or source == self.cadastros_file:
+                continue
+            self.cadastros_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, self.cadastros_file)
             return
         if bundled_file and bundled_file.exists() and bundled_file != self.cadastros_file:
             self.cadastros_file.parent.mkdir(parents=True, exist_ok=True)

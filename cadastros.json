@@ -34,7 +34,7 @@
   ],
   "notas": {
     "estrutura": "Cada cadastro contém: nome (único), percentual (0-100), código_empresa (inteiro), código_obra (inteiro)",
-    "como_usar": "1. Selecione um cadastro na GUI (app_novo.py)",
+    "como_usar": "1. Selecione um cadastro na GUI (interface_desktop.py)",
     "adicionar": "2. Pressione 'Novo' para criar novo cadastro",
     "editar": "3. Ou pressione 'Editar' para modificar um existente",
     "deletar": "4. Use 'Deletar' para remover um cadastro",

@@ -28,7 +28,7 @@ def validar_parametros(arquivo_origem, percentual, cod_empresa, cod_obra, conta_
         raise ValueError(f"❌ ERRO: Código de obra inválido: {cod_obra}")
 
 
-def carregar_e_normalizar(arquivo_origem, cod_empresa, cod_obra):
+def carregar_e_normalizar(arquivo_origem, cod_empresa, cod_obra, sheet_name: str = ""):
     """
     Carrega o arquivo de origem, normaliza colunas e retorna
     (df_original_com_acao_limpa, new_df).
@@ -43,7 +43,7 @@ def carregar_e_normalizar(arquivo_origem, cod_empresa, cod_obra):
             ultimo_erro = None
             for _ in range(3):
                 try:
-                    df = pd.read_excel(arquivo_origem)
+                    df = pd.read_excel(arquivo_origem, sheet_name=sheet_name or 0)
                     break
                 except PermissionError as e:
                     ultimo_erro = e
@@ -54,7 +54,7 @@ def carregar_e_normalizar(arquivo_origem, cod_empresa, cod_obra):
                     with tempfile.TemporaryDirectory() as tmp_dir:
                         tmp_file = Path(tmp_dir) / arquivo_origem.name
                         shutil.copy2(arquivo_origem, tmp_file)
-                        df = pd.read_excel(tmp_file)
+                        df = pd.read_excel(tmp_file, sheet_name=sheet_name or 0)
                 except PermissionError as e:
                     raise PermissionError(
                         f"❌ ARQUIVO BLOQUEADO - Não consegui acessar: {arquivo_origem}\n"

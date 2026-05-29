@@ -78,7 +78,7 @@ Clique duas vezes em: INICIAR.bat
 
 **Manual:**
 ```bash
-python app_novo.py
+python interface_desktop.py
 ```
 
 ### Primeiro Uso em 5 Passos
@@ -114,7 +114,7 @@ python app_novo.py
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                  INTERFACE GRÁFICA                       │
-│                   (app_novo.py)                          │
+│               (interface_desktop.py)                      │
 │  • Cadastros rápidos                                     │
 │  • Validações de entrada                                 │
 │  • Log em tempo real                                     │
@@ -124,7 +124,7 @@ python app_novo.py
                     ↓
 ┌─────────────────────────────────────────────────────────┐
 │              MOTOR DE CONVERSÃO                          │
-│                 (Conversor.py)                           │
+│         (motor_conversao_contabil.py)                    │
 │                                                          │
 │  ETAPAS:                                                 │
 │  1. Exclusão de Grupo (opcional)                         │
@@ -1140,8 +1140,8 @@ Arquivo muito grande ou sistema lento
 ```
 Conversão/
 │
-├── 📄 app_novo.py                    # Interface gráfica (MAIN)
-├── 📄 Conversor.py                   # Motor de conversão
+├── 📄 interface_desktop.py           # Interface gráfica (MAIN)
+├── 📄 motor_conversao_contabil.py    # Motor de conversão
 ├── 📄 config.py                      # 13 contas sagradas
 ├── 📄 INICIAR.bat                    # Script de inicialização
 ├── 📄 cadastros.json                 # Cadastros salvos
@@ -1165,14 +1165,14 @@ Conversão/
 
 ### Arquivos Principais
 
-**app_novo.py**
+**interface_desktop.py**
 - Interface gráfica Tkinter
 - Dark theme profissional
 - Gerenciamento de cadastros
 - Threading para não travar
 - ~1.000 linhas de código
 
-**Conversor.py**
+**motor_conversao_contabil.py**
 - Motor de conversão
 - 8 etapas de processamento
 - Validações matemáticas
@@ -1188,7 +1188,7 @@ Conversão/
 **INICIAR.bat**
 ```batch
 @echo off
-python app_novo.py
+python interface_desktop.py
 pause
 ```
 
@@ -1209,7 +1209,7 @@ Exemplo: Consorcio Exemplo 01.26 - Convertido.xlsx
 
 ## 💻 CÓDIGO-FONTE DOCUMENTADO
 
-### app_novo.py - Estrutura Principal
+### interface_desktop.py - Estrutura Principal
 
 ```python
 class TelaConversor:
@@ -1252,7 +1252,7 @@ class TelaConversor:
         
     def _run_conversion(self, ...):
         """Executa conversão em thread separada"""
-        # Chama Conversor.py
+        # Chama motor_conversao_contabil.py
         # Atualiza log em tempo real
         # Salva resultado
         # Memoriza conta se marcado
@@ -1270,7 +1270,7 @@ class TelaConversor:
         # Atualiza dropdown
 ```
 
-### Conversor.py - Motor de Conversão
+### motor_conversao_contabil.py - Motor de Conversão
 
 ```python
 def gerar_contabilidade_consorciada(
