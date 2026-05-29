@@ -11,7 +11,13 @@ from observabilidade import get_logger, log_event
 logger = get_logger(__name__)
 
 
-def validar_e_formatar(new_df, df_original, percentual, contas_prioritarias):
+def validar_e_formatar(
+    new_df,
+    df_original,
+    percentual,
+    contas_prioritarias,
+    account_substitutions: list[dict[str, str]] | None = None,
+):
     """
     Executa a validacao final (passo 4), aplica o piso de 0,01 (passo 4.5),
     formata as colunas e reordena para o layout UAU.
@@ -177,9 +183,14 @@ def validar_e_formatar(new_df, df_original, percentual, contas_prioritarias):
     cols_temp = ['_lance_id', 'VALOR_ORIGINAL']
     new_df = new_df.drop(columns=[c for c in cols_temp if c in new_df.columns])
 
-    # Substituir conta 3.6.03.03.000002 por 1.1.11.04.000005 em debitos
-    mask_substituir = (new_df['CONTA'] == '3.6.03.03.000002') & (new_df['ACAO'] == 'D - Débito')
-    new_df.loc[mask_substituir, 'CONTA'] = '1.1.11.04.000005'
+    # Aplica substituicoes configuradas em debitos (mantem comportamento historico da regra fixa).
+    for regra in account_substitutions or []:
+        conta_origem = str(regra.get('de', '')).strip()
+        conta_destino = str(regra.get('para', '')).strip()
+        if not conta_origem or not conta_destino:
+            continue
+        mask_substituir = (new_df['CONTA'] == conta_origem) & (new_df['ACAO'] == 'D - Débito')
+        new_df.loc[mask_substituir, 'CONTA'] = conta_destino
 
     # Formatar data para DD/MM/YYYY
     if 'Data' in new_df.columns and not new_df['Data'].isna().all():

@@ -182,6 +182,8 @@ class ConversorAppService:
         repasse_passivo: str,
         grupo_excluido: str,
         sheet_name: str = "",
+        account_substitutions: list[dict[str, str]] | None = None,
+        input_layouts: list[dict[str, list[str]]] | None = None,
         progress_callback: Callable[[float, str], None] | None = None,
     ) -> dict[str, Any]:
         arquivo_path = Path(arquivo)
@@ -204,6 +206,10 @@ class ConversorAppService:
                 kwargs: dict[str, Any] = {}
                 if sheet_name and self._aceita_parametro(self.conversao_fn, "sheet_name"):
                     kwargs["sheet_name"] = sheet_name
+                if account_substitutions and self._aceita_parametro(self.conversao_fn, "account_substitutions"):
+                    kwargs["account_substitutions"] = account_substitutions
+                if input_layouts and self._aceita_parametro(self.conversao_fn, "input_layouts"):
+                    kwargs["input_layouts"] = input_layouts
                 if progress_callback and self._aceita_parametro(self.conversao_fn, "progress_callback"):
                     kwargs["progress_callback"] = progress_callback
 
@@ -230,10 +236,16 @@ class ConversorAppService:
         obra: int,
         conta_arred: str,
         nome_consorciada: str = "",
+        account_substitutions: list[dict[str, str]] | None = None,
+        input_layouts: list[dict[str, list[str]]] | None = None,
         progress_callback: Callable[[float, str], None] | None = None,
     ) -> None:
         try:
             kwargs: dict[str, Any] = {}
+            if account_substitutions and self._aceita_parametro(self.lote_fn, "account_substitutions"):
+                kwargs["account_substitutions"] = account_substitutions
+            if input_layouts and self._aceita_parametro(self.lote_fn, "input_layouts"):
+                kwargs["input_layouts"] = input_layouts
             if progress_callback and self._aceita_parametro(self.lote_fn, "progress_callback"):
                 kwargs["progress_callback"] = progress_callback
 

@@ -4,6 +4,7 @@
 import shutil
 import tempfile
 import time
+import unicodedata
 
 import pandas as pd
 from pathlib import Path
@@ -12,6 +13,45 @@ from observabilidade import get_logger, log_event
 
 
 logger = get_logger(__name__)
+
+DEFAULT_INPUT_LAYOUTS = [
+    {"nome": "Fiscal", "termos": ["fiscal"]},
+    {"nome": "Societario", "termos": ["19", "42", "ajuste societario", "societario"]},
+]
+
+
+def _normalizar_texto(valor: str) -> str:
+    texto = str(valor)
+    sem_acentos = "".join(
+        ch for ch in unicodedata.normalize("NFKD", texto)
+        if not unicodedata.combining(ch)
+    )
+    return sem_acentos.casefold().strip()
+
+
+def _detectar_tipo_arquivo(df: pd.DataFrame, col_tipo: str | None, input_layouts) -> str:
+    layouts = input_layouts if isinstance(input_layouts, list) and input_layouts else DEFAULT_INPUT_LAYOUTS
+    if not col_tipo:
+        primeiro = str(layouts[0].get("nome", "Fiscal")).strip() if layouts else "Fiscal"
+        return (primeiro or "Fiscal").upper()
+
+    serie_normalizada = df[col_tipo].fillna("").astype(str).map(_normalizar_texto)
+    for layout in layouts:
+        if not isinstance(layout, dict):
+            continue
+        nome = str(layout.get("nome", "")).strip()
+        termos = layout.get("termos", [])
+        if not nome or not isinstance(termos, list):
+            continue
+        for termo in termos:
+            termo_normalizado = _normalizar_texto(termo)
+            if not termo_normalizado:
+                continue
+            if serie_normalizada.str.contains(termo_normalizado, case=False, regex=False, na=False).any():
+                return nome.upper()
+
+    primeiro = str(layouts[0].get("nome", "Fiscal")).strip() if layouts else "Fiscal"
+    return (primeiro or "Fiscal").upper()
 
 
 def validar_parametros(arquivo_origem, percentual, cod_empresa, cod_obra, conta_arredondamento):
@@ -28,7 +68,13 @@ def validar_parametros(arquivo_origem, percentual, cod_empresa, cod_obra, conta_
         raise ValueError(f"❌ ERRO: Código de obra inválido: {cod_obra}")
 
 
-def carregar_e_normalizar(arquivo_origem, cod_empresa, cod_obra, sheet_name: str = ""):
+def carregar_e_normalizar(
+    arquivo_origem,
+    cod_empresa,
+    cod_obra,
+    sheet_name: str = "",
+    input_layouts: list[dict[str, list[str]]] | None = None,
+):
     """
     Carrega o arquivo de origem, normaliza colunas e retorna
     (df_original_com_acao_limpa, new_df).
@@ -109,13 +155,7 @@ def carregar_e_normalizar(arquivo_origem, cod_empresa, cod_obra, sheet_name: str
     new_df = pd.DataFrame()
 
     col_tipo = next((c for c in df.columns if 'tipo' in c.lower() and 'lan' in c.lower()), None)
-    tipo_arquivo = 'FISCAL'
-    if col_tipo:
-        eh_societario = df[col_tipo].astype(str).str.contains(
-            '19|42|ajuste societario', case=False, na=False
-        ).any()
-        if eh_societario:
-            tipo_arquivo = 'SOCIETARIO'
+    tipo_arquivo = _detectar_tipo_arquivo(df, col_tipo, input_layouts)
 
     print(f"\n[✓] Tipo de arquivo detectado: {tipo_arquivo}")
     log_event(logger, 20, "entrada_tipo_detectado", etapa="entrada", arquivo=arquivo_origem, tipo=tipo_arquivo)

@@ -29,6 +29,8 @@ def gerar_contabilidade_consorciada(
     repasse_passivo=None,
     grupo_excluido=None,
     sheet_name: str = "",
+    account_substitutions: list[dict[str, str]] | None = None,
+    input_layouts: list[dict[str, list[str]]] | None = None,
     progress_callback: Callable[[float, str], None] | None = None,
 ):
     """
@@ -46,6 +48,7 @@ def gerar_contabilidade_consorciada(
         cod_empresa,
         cod_obra,
         sheet_name=sheet_name,
+        input_layouts=input_layouts,
     )
 
     _emit_progress(progress_callback, 0.12, "Aplicando exclusão de grupo")
@@ -65,7 +68,13 @@ def gerar_contabilidade_consorciada(
     )
 
     _emit_progress(progress_callback, 0.90, "Validando fechamento e formatando")
-    new_df = validar_e_formatar(new_df, df_original, percentual, CONTAS_PRIORITARIAS)
+    new_df = validar_e_formatar(
+        new_df,
+        df_original,
+        percentual,
+        CONTAS_PRIORITARIAS,
+        account_substitutions=account_substitutions,
+    )
 
     _emit_progress(progress_callback, 0.97, "Conversão calculada")
     return new_df
@@ -104,6 +113,8 @@ def processar_pasta_entrada(
     cod_obra,
     conta_arredondamento=None,
     nome_consorciada="",
+    account_substitutions: list[dict[str, str]] | None = None,
+    input_layouts: list[dict[str, list[str]]] | None = None,
     progress_callback: Callable[[float, str], None] | None = None,
 ):
     base_dir = Path(__file__).resolve().parent
@@ -138,6 +149,8 @@ def processar_pasta_entrada(
                 cod_empresa,
                 cod_obra,
                 conta_arredondamento,
+                account_substitutions=account_substitutions,
+                input_layouts=input_layouts,
                 progress_callback=progresso_arquivo,
             )
             progresso_arquivo(0.95, "Salvando arquivo de saída")

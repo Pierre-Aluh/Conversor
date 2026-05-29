@@ -33,6 +33,7 @@ import threading
 import os
 import sys
 import json
+import re
 import customtkinter as ctk
 import pandas as pd
 from PIL import Image, ImageTk
@@ -45,6 +46,13 @@ from observabilidade import get_logger, log_event
 
 APP_DISPLAY_NAME = "Conversor Contabil"
 APP_DATA_FOLDER = "Data"
+DEFAULT_ACCOUNT_SUBSTITUTIONS = [
+    {"de": "3.6.03.03.000002", "para": "1.1.11.04.000005"},
+]
+DEFAULT_INPUT_LAYOUTS = [
+    {"nome": "Fiscal", "termos": ["fiscal"]},
+    {"nome": "Societario", "termos": ["19", "42", "ajuste societario", "societario"]},
+]
 
 
 def get_runtime_base_dir():
@@ -129,6 +137,11 @@ class TelaConversor:
         self._converter_anim_phase = 0
         self.input_dir = str(self.base_dir / "entrada")
         self.output_dir = str(self.base_dir / "saida")
+        self.account_substitutions = [dict(item) for item in DEFAULT_ACCOUNT_SUBSTITUTIONS]
+        self.input_layouts = [
+            {"nome": item["nome"], "termos": list(item["termos"])}
+            for item in DEFAULT_INPUT_LAYOUTS
+        ]
         self.selected_input_file = ""
         self.file_name_var = tk.StringVar(value="Arquivo: --")
         self.sheet_name_var = tk.StringVar(value="Planilha: --")
@@ -199,6 +212,24 @@ class TelaConversor:
                     self.input_dir = entrada
                 if saida:
                     self.output_dir = saida
+
+                substituicoes = data.get("substituicoes_conta", [])
+                substituicoes_validas = []
+                if isinstance(substituicoes, list):
+                    for item in substituicoes:
+                        if not isinstance(item, dict):
+                            continue
+                        origem = self._format_account_value(str(item.get("de", "")).strip())
+                        destino = self._format_account_value(str(item.get("para", "")).strip())
+                        if self._is_valid_account(origem) and self._is_valid_account(destino):
+                            substituicoes_validas.append({"de": origem, "para": destino})
+                if substituicoes_validas:
+                    self.account_substitutions = substituicoes_validas
+
+                layouts = data.get("layouts_entrada", [])
+                layouts_validos = self._sanitize_input_layouts(layouts)
+                if layouts_validos:
+                    self.input_layouts = layouts_validos
         except (OSError, ValueError, TypeError):
             # Se o arquivo estiver inválido, mantém os padrões sem interromper a UI.
             pass
@@ -208,9 +239,60 @@ class TelaConversor:
         payload = {
             "entrada": self.input_dir,
             "saida": self.output_dir,
+            "substituicoes_conta": self.account_substitutions,
+            "layouts_entrada": self.input_layouts,
         }
         settings_file.parent.mkdir(parents=True, exist_ok=True)
         settings_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _sanitize_input_layouts(self, layouts) -> list[dict[str, list[str]]]:
+        sane_layouts = []
+        seen_names = set()
+        if not isinstance(layouts, list):
+            return sane_layouts
+
+        for raw_layout in layouts:
+            if not isinstance(raw_layout, dict):
+                continue
+
+            nome = str(raw_layout.get("nome", "")).strip()
+            if not nome:
+                continue
+
+            raw_terms = raw_layout.get("termos", [])
+            if isinstance(raw_terms, str):
+                terms_list = [part.strip() for part in re.split(r"[;,\n]+", raw_terms) if part.strip()]
+            elif isinstance(raw_terms, list):
+                terms_list = [str(part).strip() for part in raw_terms if str(part).strip()]
+            else:
+                terms_list = []
+
+            dedup_terms = []
+            seen_terms = set()
+            for term in terms_list:
+                normalized = term.casefold()
+                if normalized in seen_terms:
+                    continue
+                seen_terms.add(normalized)
+                dedup_terms.append(term)
+
+            if not dedup_terms:
+                continue
+
+            normalized_name = nome.casefold()
+            if normalized_name in seen_names:
+                continue
+            seen_names.add(normalized_name)
+            sane_layouts.append({"nome": nome, "termos": dedup_terms})
+
+        return sane_layouts
+
+    def _validate_account_substitution(self, origem: str, destino: str) -> tuple[bool, str]:
+        if not self._is_valid_account(origem) or not self._is_valid_account(destino):
+            return False, "Formato de conta incorreto"
+        if origem == destino:
+            return False, "A conta de origem deve ser diferente da conta de destino"
+        return True, ""
 
     def _new_section(self, parent, title):
         """Cria seção visual com cabeçalho e container interno."""
@@ -917,6 +999,186 @@ class TelaConversor:
             wait_response=True,
         )
         return answer.lower() == "sim"
+
+    def _show_custom_input_dialog(
+        self,
+        title: str,
+        message: str,
+        initial_value: str = "",
+        parent=None,
+    ) -> str | None:
+        """Exibe diálogo de entrada de texto no tema do app e retorna valor ou None."""
+        owner = parent or self.root
+        result = {"value": None}
+
+        dialog = ctk.CTkToplevel(owner)
+        dialog.title(title)
+        dialog.configure(fg_color=self.palette["bg_principal"])
+        dialog.geometry("620x250")
+        dialog.minsize(520, 220)
+        dialog.transient(owner)
+        dialog.grab_set()
+
+        container = ctk.CTkFrame(
+            dialog,
+            fg_color=self.palette["bg_frames"],
+            border_width=2,
+            border_color=self.palette["accent"],
+            corner_radius=12,
+        )
+        container.pack(fill="both", expand=True, padx=14, pady=14)
+
+        ctk.CTkLabel(
+            container,
+            text=title,
+            text_color=self.palette["fg_light"],
+            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+        ).pack(anchor="w", padx=14, pady=(12, 6))
+
+        ctk.CTkLabel(
+            container,
+            text=message,
+            justify="left",
+            anchor="w",
+            wraplength=560,
+            text_color=self.palette["fg_light"],
+            font=self.font_body,
+        ).pack(fill="x", padx=14, pady=(0, 8))
+
+        entry_var = tk.StringVar(value=initial_value)
+        entry = ctk.CTkEntry(
+            container,
+            textvariable=entry_var,
+            fg_color=self.palette["bg_input"],
+        )
+        entry.pack(fill="x", padx=14, pady=(0, 10))
+
+        footer = ctk.CTkFrame(container, fg_color="transparent")
+        footer.pack(fill="x", padx=12, pady=(0, 12))
+
+        def close_cancel():
+            result["value"] = None
+            dialog.destroy()
+
+        def close_ok():
+            result["value"] = entry_var.get().strip()
+            dialog.destroy()
+
+        ctk.CTkButton(
+            footer,
+            text="Cancelar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=close_cancel,
+        ).pack(side="right", padx=4)
+        ctk.CTkButton(
+            footer,
+            text="Salvar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=close_ok,
+        ).pack(side="right", padx=4)
+
+        dialog.update_idletasks()
+        owner.update_idletasks()
+        x = owner.winfo_rootx() + max(0, (owner.winfo_width() - dialog.winfo_width()) // 2)
+        y = owner.winfo_rooty() + max(0, (owner.winfo_height() - dialog.winfo_height()) // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        entry.focus_force()
+        entry.select_range(0, "end")
+        dialog.protocol("WM_DELETE_WINDOW", close_cancel)
+        dialog.wait_window()
+        return result["value"]
+
+    def _ask_text_input(self, title: str, message: str, initial_value: str = "", parent=None) -> str | None:
+        """Abre diálogo de texto no thread principal e aguarda resposta quando necessário."""
+        if threading.current_thread() is threading.main_thread():
+            return self._show_custom_input_dialog(title, message, initial_value=initial_value, parent=parent)
+
+        result = {"value": None}
+        done = threading.Event()
+
+        def open_and_store():
+            result["value"] = self._show_custom_input_dialog(
+                title,
+                message,
+                initial_value=initial_value,
+                parent=parent,
+            )
+            done.set()
+
+        self.root.after(0, open_and_store)
+        done.wait()
+        return result["value"]
+
+    @staticmethod
+    def _is_valid_excel_sheet_name(name: str) -> bool:
+        if not name:
+            return False
+        if len(name) > 31:
+            return False
+        invalid_chars = set('[]:*?/\\')
+        return not any(ch in invalid_chars for ch in name)
+
+    def _maybe_rename_output_sheet(self, arquivo_saida: Path) -> None:
+        """Após gerar o arquivo, pergunta se deseja renomear a planilha e aplica alteração."""
+        if not self._ask_yes_no(
+            "Renomear planilha",
+            "Deseja trocar o nome da planilha da pasta de trabalho gerada?",
+        ):
+            return
+
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            self._show_warning(
+                "Renomear planilha",
+                "Não foi possível renomear a planilha porque a biblioteca openpyxl não está disponível.",
+            )
+            return
+
+        workbook = load_workbook(str(arquivo_saida))
+        if not workbook.sheetnames:
+            self._show_warning("Renomear planilha", "Nenhuma planilha encontrada no arquivo gerado.")
+            return
+
+        current_name = workbook.sheetnames[0]
+        novo_nome = self._ask_text_input(
+            "Nome da planilha",
+            "Digite o novo nome da planilha (máx. 31 caracteres, sem []:*?/\\).",
+            initial_value=current_name,
+        )
+        if novo_nome is None:
+            self._log("ℹ Renomeação da planilha cancelada pelo usuário")
+            return
+
+        novo_nome = novo_nome.strip()
+        if not self._is_valid_excel_sheet_name(novo_nome):
+            self._show_error(
+                "Nome inválido",
+                "Nome de planilha inválido. Use até 31 caracteres e evite []:*?/\\",
+            )
+            return
+
+        if novo_nome == current_name:
+            self._log("ℹ Nome da planilha mantido sem alterações")
+            return
+
+        try:
+            workbook[ current_name ].title = novo_nome
+            workbook.save(str(arquivo_saida))
+            self._log(f"✓ Planilha renomeada para: {novo_nome}")
+        except (ValueError, OSError) as exc:
+            self._show_error("Erro", f"Não foi possível renomear a planilha: {exc}")
+        finally:
+            workbook.close()
         
     def _log(self, mensagem):
         """Adiciona mensagem ao log"""
@@ -1575,6 +1837,8 @@ class TelaConversor:
                 repasse_passivo,
                 grupo_excluido,
                 sheet_name=sheet_name,
+                account_substitutions=self.account_substitutions,
+                input_layouts=self.input_layouts,
                 progress_callback=self._emit_progress_threadsafe,
             )
             resultado = conversao["resultado"]
@@ -1599,6 +1863,7 @@ class TelaConversor:
             arquivo_saida = saida_dir / nome_saida
             self._emit_progress_threadsafe(0.95, "Salvando arquivo de saída")
             resultado.to_excel(arquivo_saida, index=False)
+            self._maybe_rename_output_sheet(arquivo_saida)
             self._emit_progress_threadsafe(1.0, "Conversão concluída")
             
             self._log(f"\n✓ Arquivo salvo com sucesso!")
@@ -1711,6 +1976,8 @@ class TelaConversor:
                 obra,
                 conta_arred,
                 nome_consorciada,
+                account_substitutions=self.account_substitutions,
+                input_layouts=self.input_layouts,
                 progress_callback=self._emit_progress_threadsafe,
             )
             
@@ -1750,9 +2017,9 @@ class TelaConversor:
 
     def _open_folder_settings_dialog(self):
         dialog = ctk.CTkToplevel(self.root)
-        dialog.title("Configuração de Pastas")
-        dialog.geometry("660x280")
-        dialog.minsize(620, 240)
+        dialog.title("Configurações")
+        dialog.geometry("700x360")
+        dialog.minsize(660, 320)
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.configure(fg_color=self.palette["bg_principal"])
@@ -1768,7 +2035,7 @@ class TelaConversor:
 
         ctk.CTkLabel(
             box,
-            text="Pastas padrão do Conversor",
+            text="Configurações de Pastas e Contas",
             font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
             text_color=self.palette["fg_light"],
         ).pack(anchor="w", padx=14, pady=(12, 8))
@@ -1805,6 +2072,48 @@ class TelaConversor:
                 command=cmd,
             ).pack(side="left")
 
+        row_subs = ctk.CTkFrame(box, fg_color="transparent")
+        row_subs.pack(fill="x", padx=14, pady=(6, 8))
+        ctk.CTkLabel(row_subs, text="Substituições", width=70, anchor="w").pack(side="left")
+        qtd_var = tk.StringVar(value=f"{len(self.account_substitutions)} regra(s) configurada(s)")
+        ctk.CTkLabel(row_subs, textvariable=qtd_var, text_color=self.palette["muted"]).pack(side="left", padx=(6, 8))
+
+        def open_substitutions_dialog():
+            self._open_account_substitutions_dialog(parent=dialog)
+            qtd_var.set(f"{len(self.account_substitutions)} regra(s) configurada(s)")
+
+        ctk.CTkButton(
+            row_subs,
+            text="Gerenciar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=open_substitutions_dialog,
+        ).pack(side="right")
+
+        row_layouts = ctk.CTkFrame(box, fg_color="transparent")
+        row_layouts.pack(fill="x", padx=14, pady=(0, 8))
+        ctk.CTkLabel(row_layouts, text="Layouts", width=70, anchor="w").pack(side="left")
+        qtd_layouts_var = tk.StringVar(value=f"{len(self.input_layouts)} layout(s) configurado(s)")
+        ctk.CTkLabel(row_layouts, textvariable=qtd_layouts_var, text_color=self.palette["muted"]).pack(side="left", padx=(6, 8))
+
+        def open_layouts_dialog():
+            self._open_input_layouts_dialog(parent=dialog)
+            qtd_layouts_var.set(f"{len(self.input_layouts)} layout(s) configurado(s)")
+
+        ctk.CTkButton(
+            row_layouts,
+            text="Gerenciar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=open_layouts_dialog,
+        ).pack(side="right")
+
         footer = ctk.CTkFrame(box, fg_color="transparent")
         footer.pack(fill="x", padx=12, pady=(6, 10))
 
@@ -1837,6 +2146,471 @@ class TelaConversor:
             text_color=self.palette["button_text"],
             font=self.font_button,
             command=save_and_close,
+        ).pack(side="right", padx=4)
+
+    def _open_account_substitution_form(self, parent, initial: dict[str, str] | None = None) -> dict[str, str] | None:
+        dialog = ctk.CTkToplevel(parent)
+        dialog.title("Substituição de Conta")
+        dialog.geometry("620x260")
+        dialog.minsize(560, 240)
+        dialog.transient(parent)
+        dialog.grab_set()
+        dialog.configure(fg_color=self.palette["bg_principal"])
+
+        box = ctk.CTkFrame(
+            dialog,
+            fg_color=self.palette["bg_frames"],
+            border_width=2,
+            border_color=self.palette["accent"],
+            corner_radius=12,
+        )
+        box.pack(fill="both", expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(
+            box,
+            text="Defina a regra de substituição",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            text_color=self.palette["fg_light"],
+        ).pack(anchor="w", padx=14, pady=(12, 8))
+
+        origem_var = tk.StringVar(value=str((initial or {}).get("de", "")))
+        destino_var = tk.StringVar(value=str((initial or {}).get("para", "")))
+        self._attach_mask_var(origem_var, self._format_account_value)
+        self._attach_mask_var(destino_var, self._format_account_value)
+
+        for titulo, var in (("De", origem_var), ("Para", destino_var)):
+            row = ctk.CTkFrame(box, fg_color="transparent")
+            row.pack(fill="x", padx=14, pady=6)
+            ctk.CTkLabel(row, text=titulo, width=60, anchor="w").pack(side="left")
+            ctk.CTkEntry(
+                row,
+                textvariable=var,
+                fg_color=self.palette["bg_input"],
+                placeholder_text="x.x.xx.xx.xxxxxx",
+            ).pack(side="left", fill="x", expand=True)
+
+        result = {"value": None}
+
+        def save_rule():
+            origem = self._format_account_value(origem_var.get().strip())
+            destino = self._format_account_value(destino_var.get().strip())
+            ok, msg = self._validate_account_substitution(origem, destino)
+            if not ok:
+                self._show_error("Erro", msg, parent=dialog)
+                return
+            result["value"] = {"de": origem, "para": destino}
+            dialog.destroy()
+
+        footer = ctk.CTkFrame(box, fg_color="transparent")
+        footer.pack(fill="x", padx=12, pady=(8, 12))
+        ctk.CTkButton(
+            footer,
+            text="Cancelar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=dialog.destroy,
+        ).pack(side="right", padx=4)
+        ctk.CTkButton(
+            footer,
+            text="Salvar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=save_rule,
+        ).pack(side="right", padx=4)
+
+        dialog.wait_window()
+        return result["value"]
+
+    def _open_account_substitutions_dialog(self, parent=None) -> None:
+        owner = parent or self.root
+        dialog = ctk.CTkToplevel(owner)
+        dialog.title("Substituições de Conta")
+        dialog.geometry("760x420")
+        dialog.minsize(700, 360)
+        dialog.transient(owner)
+        dialog.grab_set()
+        dialog.configure(fg_color=self.palette["bg_principal"])
+
+        box = ctk.CTkFrame(
+            dialog,
+            fg_color=self.palette["bg_frames"],
+            border_width=2,
+            border_color=self.palette["accent"],
+            corner_radius=12,
+        )
+        box.pack(fill="both", expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(
+            box,
+            text="Regras de Substituição de Conta",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            text_color=self.palette["fg_light"],
+        ).pack(anchor="w", padx=14, pady=(12, 8))
+
+        work_rules = [dict(item) for item in self.account_substitutions]
+        list_frame = ctk.CTkScrollableFrame(box, fg_color=self.palette["bg_principal"])
+        list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+
+        def render_rules():
+            for child in list_frame.winfo_children():
+                child.destroy()
+
+            if not work_rules:
+                ctk.CTkLabel(
+                    list_frame,
+                    text="Nenhuma regra cadastrada",
+                    text_color=self.palette["muted"],
+                ).pack(anchor="w", padx=8, pady=8)
+                return
+
+            for idx, rule in enumerate(work_rules):
+                row = ctk.CTkFrame(list_frame, fg_color="transparent")
+                row.pack(fill="x", padx=6, pady=4)
+
+                ctk.CTkLabel(
+                    row,
+                    text=f"{rule['de']}  ->  {rule['para']}",
+                    anchor="w",
+                    text_color=self.palette["fg_light"],
+                    font=self.font_body,
+                ).pack(side="left", fill="x", expand=True)
+
+                def edit_rule(i=idx):
+                    updated = self._open_account_substitution_form(dialog, initial=work_rules[i])
+                    if updated:
+                        work_rules[i] = updated
+                        render_rules()
+
+                def delete_rule(i=idx):
+                    if not self._ask_yes_no("Confirmação", "Deseja excluir esta regra?", parent=dialog):
+                        return
+                    del work_rules[i]
+                    render_rules()
+
+                ctk.CTkButton(
+                    row,
+                    text="Editar",
+                    width=90,
+                    fg_color=self.palette["accent"],
+                    hover_color=self.palette["accent_hover"],
+                    text_color=self.palette["button_text"],
+                    font=self.font_button,
+                    command=edit_rule,
+                ).pack(side="right", padx=4)
+                ctk.CTkButton(
+                    row,
+                    text="Excluir",
+                    width=90,
+                    fg_color=self.palette["accent"],
+                    hover_color=self.palette["accent_hover"],
+                    text_color=self.palette["button_text"],
+                    font=self.font_button,
+                    command=delete_rule,
+                ).pack(side="right", padx=4)
+
+        render_rules()
+
+        footer = ctk.CTkFrame(box, fg_color="transparent")
+        footer.pack(fill="x", padx=12, pady=(0, 12))
+
+        def add_rule():
+            novo = self._open_account_substitution_form(dialog)
+            if not novo:
+                return
+            if any(r["de"] == novo["de"] for r in work_rules):
+                self._show_error("Erro", "Já existe regra para esta conta de origem", parent=dialog)
+                return
+            work_rules.append(novo)
+            render_rules()
+
+        def save_rules():
+            self.account_substitutions = work_rules
+            self._save_folder_settings()
+            self._log(f"✓ Regras de substituição atualizadas: {len(self.account_substitutions)}")
+            dialog.destroy()
+
+        ctk.CTkButton(
+            footer,
+            text="Adicionar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=add_rule,
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            footer,
+            text="Cancelar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=dialog.destroy,
+        ).pack(side="right", padx=4)
+        ctk.CTkButton(
+            footer,
+            text="Salvar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=save_rules,
+        ).pack(side="right", padx=4)
+
+    def _open_input_layout_form(self, parent, initial: dict[str, list[str]] | None = None) -> dict[str, list[str]] | None:
+        dialog = ctk.CTkToplevel(parent)
+        dialog.title("Layout de Entrada")
+        dialog.geometry("680x340")
+        dialog.minsize(620, 320)
+        dialog.transient(parent)
+        dialog.grab_set()
+        dialog.configure(fg_color=self.palette["bg_principal"])
+
+        box = ctk.CTkFrame(
+            dialog,
+            fg_color=self.palette["bg_frames"],
+            border_width=2,
+            border_color=self.palette["accent"],
+            corner_radius=12,
+        )
+        box.pack(fill="both", expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(
+            box,
+            text="Defina o nome do layout e os termos de reconhecimento",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            text_color=self.palette["fg_light"],
+        ).pack(anchor="w", padx=14, pady=(12, 8))
+
+        nome_var = tk.StringVar(value=str((initial or {}).get("nome", "")))
+        termos_iniciais = ", ".join((initial or {}).get("termos", []))
+        termos_var = tk.StringVar(value=termos_iniciais)
+
+        row_nome = ctk.CTkFrame(box, fg_color="transparent")
+        row_nome.pack(fill="x", padx=14, pady=6)
+        ctk.CTkLabel(row_nome, text="Nome", width=90, anchor="w").pack(side="left")
+        ctk.CTkEntry(
+            row_nome,
+            textvariable=nome_var,
+            fg_color=self.palette["bg_input"],
+            placeholder_text="Ex.: Fiscal",
+        ).pack(side="left", fill="x", expand=True)
+
+        row_termos = ctk.CTkFrame(box, fg_color="transparent")
+        row_termos.pack(fill="x", padx=14, pady=6)
+        ctk.CTkLabel(row_termos, text="Termos", width=90, anchor="w").pack(side="left")
+        ctk.CTkEntry(
+            row_termos,
+            textvariable=termos_var,
+            fg_color=self.palette["bg_input"],
+            placeholder_text="Ex.: fiscal, ajuste societario, 19",
+        ).pack(side="left", fill="x", expand=True)
+
+        ctk.CTkLabel(
+            box,
+            text="Separe os termos por vírgula, ponto e vírgula ou quebra de linha.",
+            text_color=self.palette["muted"],
+        ).pack(anchor="w", padx=14, pady=(0, 6))
+
+        result = {"value": None}
+
+        def save_layout():
+            nome = nome_var.get().strip()
+            termos = [part.strip() for part in re.split(r"[;,\n]+", termos_var.get()) if part.strip()]
+            layout_sanitizado = self._sanitize_input_layouts([{"nome": nome, "termos": termos}])
+            if not layout_sanitizado:
+                self._show_error("Erro", "Informe um nome e pelo menos um termo de reconhecimento", parent=dialog)
+                return
+            result["value"] = layout_sanitizado[0]
+            dialog.destroy()
+
+        footer = ctk.CTkFrame(box, fg_color="transparent")
+        footer.pack(fill="x", padx=12, pady=(8, 12))
+        ctk.CTkButton(
+            footer,
+            text="Cancelar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=dialog.destroy,
+        ).pack(side="right", padx=4)
+        ctk.CTkButton(
+            footer,
+            text="Salvar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=save_layout,
+        ).pack(side="right", padx=4)
+
+        dialog.wait_window()
+        return result["value"]
+
+    def _open_input_layouts_dialog(self, parent=None) -> None:
+        owner = parent or self.root
+        dialog = ctk.CTkToplevel(owner)
+        dialog.title("Layouts de Entrada")
+        dialog.geometry("780x440")
+        dialog.minsize(720, 380)
+        dialog.transient(owner)
+        dialog.grab_set()
+        dialog.configure(fg_color=self.palette["bg_principal"])
+
+        box = ctk.CTkFrame(
+            dialog,
+            fg_color=self.palette["bg_frames"],
+            border_width=2,
+            border_color=self.palette["accent"],
+            corner_radius=12,
+        )
+        box.pack(fill="both", expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(
+            box,
+            text="Layouts de Entrada (Reconhecimento Automático)",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            text_color=self.palette["fg_light"],
+        ).pack(anchor="w", padx=14, pady=(12, 8))
+
+        work_layouts = [
+            {"nome": layout["nome"], "termos": list(layout["termos"])}
+            for layout in self.input_layouts
+        ]
+        list_frame = ctk.CTkScrollableFrame(box, fg_color=self.palette["bg_principal"])
+        list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+
+        def render_layouts():
+            for child in list_frame.winfo_children():
+                child.destroy()
+
+            if not work_layouts:
+                ctk.CTkLabel(
+                    list_frame,
+                    text="Nenhum layout cadastrado",
+                    text_color=self.palette["muted"],
+                ).pack(anchor="w", padx=8, pady=8)
+                return
+
+            for idx, layout in enumerate(work_layouts):
+                row = ctk.CTkFrame(list_frame, fg_color="transparent")
+                row.pack(fill="x", padx=6, pady=4)
+
+                termos_texto = ", ".join(layout["termos"])
+                ctk.CTkLabel(
+                    row,
+                    text=f"{layout['nome']} | {termos_texto}",
+                    anchor="w",
+                    text_color=self.palette["fg_light"],
+                    font=self.font_body,
+                ).pack(side="left", fill="x", expand=True)
+
+                def edit_layout(i=idx):
+                    updated = self._open_input_layout_form(dialog, initial=work_layouts[i])
+                    if not updated:
+                        return
+                    for j, existing in enumerate(work_layouts):
+                        if j == i:
+                            continue
+                        if existing["nome"].casefold() == updated["nome"].casefold():
+                            self._show_error("Erro", "Já existe layout com este nome", parent=dialog)
+                            return
+                    work_layouts[i] = updated
+                    render_layouts()
+
+                def delete_layout(i=idx):
+                    if not self._ask_yes_no("Confirmação", "Deseja excluir este layout?", parent=dialog):
+                        return
+                    del work_layouts[i]
+                    render_layouts()
+
+                ctk.CTkButton(
+                    row,
+                    text="Editar",
+                    width=90,
+                    fg_color=self.palette["accent"],
+                    hover_color=self.palette["accent_hover"],
+                    text_color=self.palette["button_text"],
+                    font=self.font_button,
+                    command=edit_layout,
+                ).pack(side="right", padx=4)
+                ctk.CTkButton(
+                    row,
+                    text="Excluir",
+                    width=90,
+                    fg_color=self.palette["accent"],
+                    hover_color=self.palette["accent_hover"],
+                    text_color=self.palette["button_text"],
+                    font=self.font_button,
+                    command=delete_layout,
+                ).pack(side="right", padx=4)
+
+        render_layouts()
+
+        footer = ctk.CTkFrame(box, fg_color="transparent")
+        footer.pack(fill="x", padx=12, pady=(0, 12))
+
+        def add_layout():
+            novo = self._open_input_layout_form(dialog)
+            if not novo:
+                return
+            if any(layout["nome"].casefold() == novo["nome"].casefold() for layout in work_layouts):
+                self._show_error("Erro", "Já existe layout com este nome", parent=dialog)
+                return
+            work_layouts.append(novo)
+            render_layouts()
+
+        def save_layouts():
+            sane = self._sanitize_input_layouts(work_layouts)
+            if not sane:
+                self._show_error("Erro", "Cadastre ao menos um layout com termos válidos", parent=dialog)
+                return
+            self.input_layouts = sane
+            self._save_folder_settings()
+            self._log(f"✓ Layouts de entrada atualizados: {len(self.input_layouts)}")
+            dialog.destroy()
+
+        ctk.CTkButton(
+            footer,
+            text="Adicionar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=add_layout,
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            footer,
+            text="Cancelar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=dialog.destroy,
+        ).pack(side="right", padx=4)
+        ctk.CTkButton(
+            footer,
+            text="Salvar",
+            width=110,
+            fg_color=self.palette["accent"],
+            hover_color=self.palette["accent_hover"],
+            text_color=self.palette["button_text"],
+            font=self.font_button,
+            command=save_layouts,
         ).pack(side="right", padx=4)
     
     def _clear_log(self):
@@ -1927,6 +2701,10 @@ def show_splash_screen(root):
         # Fechar após 2500ms (2.5 segundos)
         def close_splash():
             is_running[0] = False
+            try:
+                splash.attributes('-topmost', False)
+            except tk.TclError:
+                pass
             splash.destroy()
         
         splash.after(2500, close_splash)
@@ -1946,6 +2724,10 @@ def show_splash_screen(root):
 def main():
     logger = get_logger(__name__)
     root = ctk.CTk()
+    root.attributes('-topmost', False)
+
+    # Evita comportamento de janela "sempre na frente" ao alternar aplicativos.
+    root.bind("<FocusOut>", lambda _e: root.attributes('-topmost', False))
     root.withdraw()  # Ocultar janela principal temporariamente
     
     # Definir ícone customizado (formato .ico funciona melhor na barra de tarefas)
@@ -1962,6 +2744,7 @@ def main():
     
     # Aguardar splash terminar (2.5s) + buffer
     root.after(2600, lambda: root.deiconify())  # Mostrar janela principal
+    root.after(2620, lambda: root.attributes('-topmost', False))
     
     app = TelaConversor(root)
     root.mainloop()
