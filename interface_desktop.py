@@ -310,10 +310,56 @@ class TelaConversor:
         
     def _create_widgets(self):
         """Cria os elementos da interface com layout fluido em CTk."""
-        self.root.grid_rowconfigure(4, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
-        frame_topo = ctk.CTkFrame(self.root, fg_color="transparent")
+        self.main_area = ctk.CTkFrame(self.root, fg_color="transparent")
+        self.main_area.grid(row=0, column=0, sticky="nsew")
+        self.main_area.grid_rowconfigure(0, weight=1)
+        self.main_area.grid_columnconfigure(0, weight=1)
+
+        self.main_canvas = tk.Canvas(
+            self.main_area,
+            highlightthickness=0,
+            bd=0,
+            relief=tk.FLAT,
+            bg=self.palette["bg_principal"],
+        )
+        self.v_scrollbar = ctk.CTkScrollbar(
+            self.main_area,
+            orientation="vertical",
+            command=self.main_canvas.yview,
+            fg_color=self.palette["bg_frames"],
+            button_color=self.palette["accent"],
+            button_hover_color=self.palette["accent_hover"],
+        )
+        self.h_scrollbar = ctk.CTkScrollbar(
+            self.main_area,
+            orientation="horizontal",
+            command=self.main_canvas.xview,
+            fg_color=self.palette["bg_frames"],
+            button_color=self.palette["accent"],
+            button_hover_color=self.palette["accent_hover"],
+        )
+        self._v_scroll_visible = False
+        self._h_scroll_visible = False
+        self.main_canvas.configure(
+            yscrollcommand=self._on_canvas_yscroll,
+            xscrollcommand=self._on_canvas_xscroll,
+        )
+
+        self.main_canvas.grid(row=0, column=0, sticky="nsew")
+        self.v_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.h_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.v_scrollbar.grid_remove()
+        self.h_scrollbar.grid_remove()
+
+        self.main_content = ctk.CTkFrame(self.main_canvas, fg_color="transparent")
+        self.main_content_window = self.main_canvas.create_window((0, 0), window=self.main_content, anchor="nw")
+        self.main_content.bind("<Configure>", self._refresh_main_scrollregion)
+        self.main_canvas.bind("<Configure>", self._sync_main_content_width)
+
+        frame_topo = ctk.CTkFrame(self.main_content, fg_color="transparent")
         frame_topo.pack(fill="x", padx=12, pady=(8, 0))
         self.btn_settings = ctk.CTkButton(
             frame_topo,
@@ -328,7 +374,7 @@ class TelaConversor:
         )
         self.btn_settings.pack(side="left")
 
-        frame_arquivo = self._new_section(self.root, "Arquivo de Entrada")
+        frame_arquivo = self._new_section(self.main_content, "Arquivo de Entrada")
         frame_arquivo.pack(fill="x")
         self.file_info_badge = ctk.CTkFrame(
             frame_arquivo,
@@ -401,7 +447,7 @@ class TelaConversor:
         )
         self.btn_processar_pasta.pack(side="left", padx=4)
 
-        frame_diretorios = ctk.CTkFrame(self.root, fg_color="transparent")
+        frame_diretorios = ctk.CTkFrame(self.main_content, fg_color="transparent")
         frame_diretorios.pack(fill="x", padx=12, pady=(0, 4))
         self.btn_entrada_dir = ctk.CTkButton(
             frame_diretorios,
@@ -426,7 +472,7 @@ class TelaConversor:
         )
         self.btn_saida_dir.pack(side="left", padx=(0, 6))
 
-        frame_config = self._new_section(self.root, "Configurações de Conversão")
+        frame_config = self._new_section(self.main_content, "Configurações de Conversão")
         frame_config.pack(fill="x")
         for col in (0, 1, 2, 3):
             frame_config.grid_columnconfigure(col, weight=1 if col in (1, 3) else 0)
@@ -492,7 +538,7 @@ class TelaConversor:
             checkbox_height=18,
         ).grid(row=3, column=2, columnspan=2, sticky="w", padx=6, pady=6)
 
-        frame_cadastros = self._new_section(self.root, "Cadastros Rápidos")
+        frame_cadastros = self._new_section(self.main_content, "Cadastros Rápidos")
         frame_cadastros.pack(fill="x")
         ctk.CTkLabel(frame_cadastros, text="Consorciada").pack(side="left", padx=(0, 8))
         self.cadastro_var = tk.StringVar()
@@ -541,7 +587,7 @@ class TelaConversor:
         )
         self.btn_excluir_cadastro.pack(side="left", padx=3)
 
-        frame_botoes = ctk.CTkFrame(self.root, fg_color="transparent")
+        frame_botoes = ctk.CTkFrame(self.main_content, fg_color="transparent")
         frame_botoes.pack(fill="x", padx=12, pady=(6, 8))
         self.btn_converter = ctk.CTkButton(
             frame_botoes,
@@ -631,7 +677,7 @@ class TelaConversor:
         ).pack(anchor="w", padx=10, pady=(0, 8))
         self.progress_panel.pack_forget()
 
-        frame_log = self._new_section(self.root, "Log de Execução")
+        frame_log = self._new_section(self.main_content, "Log de Execução")
         frame_log.pack(fill="both", expand=True)
         self.log_text = ctk.CTkTextbox(
             frame_log,
@@ -645,15 +691,98 @@ class TelaConversor:
 
         self.status_var = tk.StringVar(value="Pronto")
         status_bar = ctk.CTkLabel(
-            self.root,
+            self.main_content,
             textvariable=self.status_var,
             text_color=self.palette["muted"],
             anchor="w",
             fg_color="#0f172a",
             corner_radius=0,
         )
-        status_bar.pack(fill="x", side="bottom", padx=12)
+        status_bar.pack(fill="x", padx=12, pady=(0, 6))
+        self._bind_global_mousewheel()
         self._start_converter_animation()
+
+    def _bind_global_mousewheel(self):
+        """Habilita rolagem global da tela principal enquanto o app estiver ativo."""
+        self.root.bind_all("<MouseWheel>", self._on_global_mousewheel, add="+")
+        self.root.bind_all("<Shift-MouseWheel>", self._on_global_shift_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._on_global_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self._on_global_mousewheel, add="+")
+        self.root.bind_all("<Shift-Button-4>", self._on_global_shift_mousewheel, add="+")
+        self.root.bind_all("<Shift-Button-5>", self._on_global_shift_mousewheel, add="+")
+
+    @staticmethod
+    def _wheel_steps(event) -> int:
+        """Normaliza delta do mouse para passos de rolagem."""
+        if getattr(event, "num", None) == 4:
+            return -1
+        if getattr(event, "num", None) == 5:
+            return 1
+        delta = int(getattr(event, "delta", 0))
+        if delta == 0:
+            return 0
+        return -int(delta / 120) if abs(delta) >= 120 else (-1 if delta > 0 else 1)
+
+    def _on_global_mousewheel(self, event):
+        """Rola verticalmente o conteúdo principal de qualquer ponto da janela."""
+        steps = self._wheel_steps(event)
+        if steps != 0:
+            self.main_canvas.yview_scroll(steps, "units")
+            self._sync_scrollbar_visibility()
+        return "break"
+
+    def _on_global_shift_mousewheel(self, event):
+        """Rola horizontalmente com Shift+roda em qualquer ponto da janela."""
+        steps = self._wheel_steps(event)
+        if steps != 0:
+            self.main_canvas.xview_scroll(steps, "units")
+            self._sync_scrollbar_visibility()
+        return "break"
+
+    def _refresh_main_scrollregion(self, _event=None):
+        """Atualiza os limites de rolagem conforme o tamanho real do conteúdo."""
+        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+        self._sync_scrollbar_visibility()
+
+    def _sync_main_content_width(self, event):
+        """Mantém o conteúdo ocupando a largura visível, sem perder rolagem horizontal."""
+        required = self.main_content.winfo_reqwidth()
+        target_width = max(event.width, required)
+        self.main_canvas.itemconfigure(self.main_content_window, width=target_width)
+        self._refresh_main_scrollregion()
+
+    def _on_canvas_yscroll(self, first, last):
+        """Aplica posição da rolagem vertical e alterna visibilidade da barra."""
+        self.v_scrollbar.set(first, last)
+        first_f = float(first)
+        last_f = float(last)
+        need_scroll = first_f > 0.0 or last_f < 1.0
+        if need_scroll and not self._v_scroll_visible:
+            self.v_scrollbar.grid()
+            self._v_scroll_visible = True
+        elif not need_scroll and self._v_scroll_visible:
+            self.v_scrollbar.grid_remove()
+            self._v_scroll_visible = False
+
+    def _on_canvas_xscroll(self, first, last):
+        """Aplica posição da rolagem horizontal e alterna visibilidade da barra."""
+        self.h_scrollbar.set(first, last)
+        first_f = float(first)
+        last_f = float(last)
+        need_scroll = first_f > 0.0 or last_f < 1.0
+        if need_scroll and not self._h_scroll_visible:
+            self.h_scrollbar.grid()
+            self._h_scroll_visible = True
+        elif not need_scroll and self._h_scroll_visible:
+            self.h_scrollbar.grid_remove()
+            self._h_scroll_visible = False
+
+    def _sync_scrollbar_visibility(self):
+        """Força reavaliação da necessidade de barras após redimensionamentos."""
+        x_first, x_last = self.main_canvas.xview()
+        y_first, y_last = self.main_canvas.yview()
+        self._on_canvas_xscroll(x_first, x_last)
+        self._on_canvas_yscroll(y_first, y_last)
 
     def _set_busy_state(self, active, texto_status):
         """Controla feedback visual durante operacoes longas."""
